@@ -1,3 +1,6 @@
+# Others
+.cache
+
 # Prerequisites
 *.d
 
