@@ -1,6 +1,6 @@
 # yfs
 
-An simple implementation of KEVIN.
+A simple implementation of KEVIN.
 
 Two parts: yfs in filesystem layer and yssd in block device layer.
 
