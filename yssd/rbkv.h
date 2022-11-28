@@ -9,8 +9,6 @@ struct y_rb_node {
     struct y_key key;
 };
 
-int y_rb_cmp(struct y_key* left, struct y_key* right);
-
 struct y_rb_node* y_rb_find(struct rb_root* root, struct y_key* key);
 
 int y_rb_insert(struct rb_root* root, struct y_rb_node* elem);

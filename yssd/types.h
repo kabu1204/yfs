@@ -52,4 +52,6 @@ struct y_io_req {
 #define print_y_key(key) {pr_info("%s:%d%s%s", key->typ==METADATA?"m":"d", key->ino, (key->name[0]=='\0'?":":""), key->name);}
 #define sprint_y_key(buf, key) {snprintf(buf, sizeof(struct y_key)+24, "%s:%d%s%s", key->typ==METADATA?"m":"d", key->ino, (key->name[0]=='\0'?":":""), key->name);}
 
+int y_key_cmp(struct y_key *left, struct y_key *right);
+
 #endif
