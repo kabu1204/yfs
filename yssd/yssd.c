@@ -178,6 +178,8 @@ static int __init yssd_init(void)
         return res;
     }
 
+    pr_info("YSSD init\n");
+
     return 0;
 }
 
@@ -185,6 +187,7 @@ static void __exit yssd_exit(void)
 {
     delete_block_dev(&block_device);
     unregister_blkdev(YSSD_MAJOR, YSSD_DEV_NAME);
+    pr_info("YSSD exit\n");
 }
 
 module_init(yssd_init);
