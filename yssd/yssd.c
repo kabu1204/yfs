@@ -51,17 +51,29 @@ int blockdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd, unsign
 
 static int y_bio_get(char* buf, unsigned int max_len, const struct y_key* key, unsigned int len, unsigned off){
     // TODO: implement me
-    return -1;
+    pr_info("yssd GET\n");
+    print_y_key(key);
+    return 0;
 }
 
 static int y_bio_set(char* buf, unsigned int max_len, const struct y_key* key, unsigned int len, unsigned off){
     // TODO: implement me
-    return -1;
+    pr_info("yssd SET\n");
+    return 0;
 }
 
 static int y_bio_del(char* buf, unsigned int max_len, const struct y_key* key, unsigned int len, unsigned off){
     // TODO: implement me
-    return -1;
+    pr_info("yssd DEL\n");
+    return 0;
+}
+
+static int y_bio_get_first_block(char* buf, unsigned int max_len, const struct y_key* key, unsigned int len, unsigned off){
+    // TODO: implement me
+    pr_info("yssd GET_FIRST_BLOCK\n");
+    print_y_key(key);
+    strcpy(buf, "This is first block.");
+    return 0;
 }
 
 static blk_qc_t y_make_request(struct request_queue* q, struct bio* bio){
@@ -102,6 +114,11 @@ static blk_qc_t y_make_request(struct request_queue* q, struct bio* bio){
                 res = y_bio_del(addr+off, len, req->key, req->len, req->off);
                 kunmap_atomic(addr);
             }
+            break;
+        case GET_FIRST_BLOCK:
+            addr = kmap_atomic(bvec.bv_page);
+            res = y_bio_get_first_block(addr+off, len, req->key, req->len, req->off);
+            kunmap_atomic(addr);
             break;
         default:
             break;

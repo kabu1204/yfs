@@ -6,6 +6,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 
-struct inode* yfs_get_inode(struct super_block* sb, unsigned int ino);
+struct inode* yfs_get_inode(struct super_block* sb, unsigned int ino, const struct inode *dir, umode_t mode, dev_t dev);
 
 #endif

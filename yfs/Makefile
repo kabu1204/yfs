@@ -1,6 +1,7 @@
-MODULE = yssd
+MODULE = yfs
 
-obj-m += yssd.o
+obj-m += yfs.o
+$(MODULE)-objs := fs.o inode.o
 
 PWD := $(CURDIR)
 

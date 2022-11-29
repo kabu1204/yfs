@@ -8,6 +8,7 @@
 #define YFS_NAME "yfs"
 #define YFS_MAGIC 0xcafe
 #define YFS_MAX_FILE_SIZE 1<<28 // 256MB
+#define YFS_DEFAULT_MODE 0755
 
 static unsigned long once = 0;
 
@@ -33,10 +34,12 @@ static int yfs_fill_super(struct super_block *sb, void *data, int silent)
     sb->s_op                = &yfs_super_ops;
     sb->s_time_gran         = 1;
 
-    inode = yfs_get_inode(sb, 0);
+    inode = yfs_get_inode(sb, 0, NULL, S_IFDIR | YFS_DEFAULT_MODE, 0);
     sb->s_root = d_make_root(inode);
-    if (!sb->s_root)
+    if (!sb->s_root){
+        pr_err("failed to d_make_root\n");
         return -ENOMEM;
+    }
 
     return 0;
 }

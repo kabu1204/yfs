@@ -16,6 +16,8 @@ enum y_io_req_type{
     BeginTX,    // BeginTX
     AbortTX,    // AbortTX
     EndTX,      // EndTX
+
+    GET_FIRST_BLOCK,    // first ssd block is used to storage superblock info
 };
 
 enum y_txn_status {
@@ -49,8 +51,8 @@ struct y_io_req {
     };
 };
 
-#define print_y_key(key) {pr_info("%s:%d%s%s", key->typ==METADATA?"m":"d", key->ino, (key->name[0]=='\0'?":":""), key->name);}
-#define sprint_y_key(buf, key) {snprintf(buf, sizeof(struct y_key)+24, "%s:%d%s%s", key->typ==METADATA?"m":"d", key->ino, (key->name[0]=='\0'?":":""), key->name);}
+#define print_y_key(key) {pr_info("%s:%d%s%s\n", key->typ==METADATA?"m":"d", key->ino, (key->name[0]!='\0'?":":""), key->name);}
+#define sprint_y_key(buf, key) {snprintf(buf, sizeof(struct y_key)+24, "%s:%d%s%s", key->typ==METADATA?"m":"d", key->ino, (key->name[0]!='\0'?":":""), key->name);}
 
 int y_key_cmp(struct y_key *left, struct y_key *right);
 
