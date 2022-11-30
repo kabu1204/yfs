@@ -2,6 +2,8 @@
 .cache
 .vscode
 compile_commands.json
+yssd.data
+mnt
 
 # Prerequisites
 *.d

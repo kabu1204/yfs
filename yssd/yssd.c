@@ -11,18 +11,19 @@
 #include <linux/rbtree.h>
 #include "types.h"
 
-#ifndef SECTOR_SIZE
-#define SECTOR_SIZE 512
-#endif
-
 #define YSSD_MAJOR 240
 #define YSSD_DEV_NAME "yssd"
 
 static unsigned long n_sectors;
+static unsigned long n_bytes;
+static unsigned long n_pages;
 
 static char* yssd_file = "yssd.data";
 module_param(yssd_file, charp, 0660);
 MODULE_PARM_DESC(yssd_file, "file to be treated as a pseudo ssd");
+
+static struct file* fp;
+static char g_buf[PAGE_SIZE+1];
 
 static struct yssd_block_dev {
     int yssd_number;
@@ -74,6 +75,71 @@ static int y_bio_get_first_block(char* buf, unsigned int max_len, const struct y
     print_y_key(key);
     strcpy(buf, "This is first block.");
     return 0;
+}
+
+static void yssd_read_phys_page(char* buf, unsigned long page_no){
+    loff_t off=page_no*PAGE_SIZE;
+    size_t sz;
+    if(likely(page_no<n_pages)){
+        sz = kernel_read(fp, buf, PAGE_SIZE, &off);
+        if(unlikely(sz != PAGE_SIZE)){
+            pr_warn("kernel_read %ld bytes != PAGE_SIZE\n", sz);
+        }
+        return;
+    } else {
+        pr_warn("page_no %ld >= n_pages(%ld)\n", page_no, n_pages);
+    }
+}
+
+static void yssd_write_phys_page(char* buf, unsigned long page_no){
+    loff_t off=page_no*PAGE_SIZE;
+    size_t sz;
+    if(likely(page_no<n_pages)){
+        sz = kernel_write(fp, buf, PAGE_SIZE, &off);
+        if(unlikely(sz != PAGE_SIZE)){
+            pr_warn("kernel_read %ld bytes != PAGE_SIZE\n", sz);
+        }
+        return;
+    } else {
+        pr_warn("page_no %ld >= n_pages(%ld)\n", page_no, n_pages);
+    }
+}
+
+static int yssd_load_file(void){
+    loff_t off=0;
+    ssize_t sz;
+    char* full_path;
+
+    fp = filp_open(yssd_file, O_RDWR, 0644);
+    if(IS_ERR(fp)){
+        pr_err("failed to open file: %s\n", yssd_file);
+        return -EIO;
+    }
+
+    full_path = dentry_path_raw(fp->f_path.dentry, g_buf, PAGE_SIZE);
+    pr_info("file path: %s\n", full_path);
+    n_bytes = i_size_read(file_inode(fp));
+    n_sectors = n_bytes/SECTOR_SIZE;
+    n_pages = n_bytes/n_pages;
+    pr_info("Total space: %ld MB\n", n_bytes/(1<<20));
+    pr_info("n_sectors: %ld \n", n_sectors);
+    pr_info("n_pages: %ld MB\n", n_pages);
+
+    
+    sz = kernel_write(fp, "This is first block.", 20, &off);
+    pr_info("bytes wrote: %ld\n", sz);
+    pr_info("off after wrote: %lld\n", off);
+    off = 0;
+    sz = kernel_read(fp, g_buf, PAGE_SIZE, &off);
+    pr_info("bytes read: %ld\n", sz);
+    pr_info("off after read: %lld\n", off);
+    pr_info("g_buf after read: %s\n", g_buf);
+
+    return 0;
+}
+
+static void yssd_close_file(void){
+    filp_close(fp, NULL);
 }
 
 static blk_qc_t y_make_request(struct request_queue* q, struct bio* bio){
@@ -175,7 +241,6 @@ static void delete_block_dev(struct yssd_block_dev* dev){
     }
 }
 
-
 static int __init yssd_init(void)
 {
     int res;
@@ -195,6 +260,8 @@ static int __init yssd_init(void)
         return res;
     }
 
+    yssd_load_file();
+
     pr_info("YSSD init\n");
 
     return 0;
@@ -204,6 +271,7 @@ static void __exit yssd_exit(void)
 {
     delete_block_dev(&block_device);
     unregister_blkdev(YSSD_MAJOR, YSSD_DEV_NAME);
+    yssd_close_file();
     pr_info("YSSD exit\n");
 }
 

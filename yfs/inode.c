@@ -61,5 +61,5 @@ out:
         return NULL;
     }
     // TODO: set inode attributes
-    return inode
+    return inode;
 }
