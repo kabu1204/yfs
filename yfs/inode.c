@@ -39,7 +39,7 @@ struct inode* yfs_get_inode(struct super_block* sb, unsigned int ino, const stru
     req->typ = GET_FIRST_BLOCK;
     req->tid = 0;
     req->key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
-    req->key->typ = METADATA;
+    req->key->typ = Y_KV_META;
     req->key->ino = 123;
     strcpy(req->key->name, "/home/ycy");
     bio->bi_end_io = y_end_bio;

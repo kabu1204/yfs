@@ -9,6 +9,8 @@
 #include <linux/blk-mq.h>
 #include <linux/hdreg.h>
 #include <linux/rbtree.h>
+#include <linux/random.h>
+#include "rbkv.h"
 #include "types.h"
 
 #define YSSD_MAJOR 240
@@ -120,10 +122,10 @@ static int yssd_load_file(void){
     pr_info("file path: %s\n", full_path);
     n_bytes = i_size_read(file_inode(fp));
     n_sectors = n_bytes/SECTOR_SIZE;
-    n_pages = n_bytes/n_pages;
+    n_pages = n_bytes/PAGE_SIZE;
     pr_info("Total space: %ld MB\n", n_bytes/(1<<20));
-    pr_info("n_sectors: %ld \n", n_sectors);
-    pr_info("n_pages: %ld MB\n", n_pages);
+    pr_info("n_sectors:   %ld \n", n_sectors);
+    pr_info("n_pages:     %ld \n", n_pages);
 
     
     sz = kernel_write(fp, "This is first block.", 20, &off);
@@ -137,6 +139,7 @@ static int yssd_load_file(void){
 
     return 0;
 }
+
 
 static void yssd_close_file(void){
     filp_close(fp, NULL);
@@ -263,6 +266,9 @@ static int __init yssd_init(void)
     yssd_load_file();
 
     pr_info("YSSD init\n");
+
+    test_y_rbkv_insert();
+    test_y_rbkv_update();
 
     return 0;
 }

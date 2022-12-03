@@ -1,6 +1,7 @@
 MODULE = yssd
 
 obj-m += yssd.o
+$(MODULE)-objs := module.o rbkv.o types.o
 
 PWD := $(CURDIR)
 

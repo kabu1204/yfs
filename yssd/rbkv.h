@@ -6,11 +6,14 @@
 
 struct y_rb_node {
     struct rb_node node;
-    struct y_key key;
+    struct y_k2v kv;
 };
 
 struct y_rb_node* y_rb_find(struct rb_root* root, struct y_key* key);
 
 int y_rb_insert(struct rb_root* root, struct y_rb_node* elem);
+
+void test_y_rbkv_insert(void);
+void test_y_rbkv_update(void);
 
 #endif
