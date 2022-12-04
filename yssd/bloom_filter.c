@@ -1,14 +1,6 @@
 #include "bloom_filter.h"
 #include "linux/slab.h"
-
-unsigned long sdbm_hash(const unsigned char *str)
-{
-    unsigned long hash = 0;
-    int c;
-    while (c = *str++)
-        hash = c + (hash << 6) + (hash << 16) - hash;
-    return hash;
-}
+#include "types.h"
 
 struct bloom_filter* bloom_alloc(void){
     struct bloom_filter* bf = kmalloc(sizeof(struct bloom_filter), GFP_KERNEL);

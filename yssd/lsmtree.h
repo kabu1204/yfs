@@ -15,9 +15,9 @@ struct lsm_tree {
 
 struct lsm_tree* lsm_tree_create(void);
 
-struct y_value* lsm_tree_get(struct lsm_tree* lt, struct y_key* key);
+struct y_val_ptr lsm_tree_get(struct lsm_tree* lt, struct y_key* key);
 
-void lsm_tree_set(struct lsm_tree* lt, struct y_k2v* k2v, struct y_value* val);
+void lsm_tree_set(struct lsm_tree* lt, struct y_k2v* k2v);
 
 void lsm_tree_del(struct lsm_tree* lt, struct y_key* key);
 

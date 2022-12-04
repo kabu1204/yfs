@@ -16,15 +16,10 @@
 #define YSSD_MAJOR 240
 #define YSSD_DEV_NAME "yssd"
 
-static unsigned long n_sectors;
-static unsigned long n_bytes;
-static unsigned long n_pages;
-
 static char* yssd_file = "yssd.data";
 module_param(yssd_file, charp, 0660);
 MODULE_PARM_DESC(yssd_file, "file to be treated as a pseudo ssd");
 
-static struct file* fp;
 static char g_buf[PAGE_SIZE+1];
 
 static struct yssd_block_dev {
@@ -77,34 +72,6 @@ static int y_bio_get_first_block(char* buf, unsigned int max_len, const struct y
     print_y_key(key);
     strcpy(buf, "This is first block.");
     return 0;
-}
-
-static void yssd_read_phys_page(char* buf, unsigned long page_no){
-    loff_t off=page_no*PAGE_SIZE;
-    size_t sz;
-    if(likely(page_no<n_pages)){
-        sz = kernel_read(fp, buf, PAGE_SIZE, &off);
-        if(unlikely(sz != PAGE_SIZE)){
-            pr_warn("kernel_read %ld bytes != PAGE_SIZE\n", sz);
-        }
-        return;
-    } else {
-        pr_warn("page_no %ld >= n_pages(%ld)\n", page_no, n_pages);
-    }
-}
-
-static void yssd_write_phys_page(char* buf, unsigned long page_no){
-    loff_t off=page_no*PAGE_SIZE;
-    size_t sz;
-    if(likely(page_no<n_pages)){
-        sz = kernel_write(fp, buf, PAGE_SIZE, &off);
-        if(unlikely(sz != PAGE_SIZE)){
-            pr_warn("kernel_read %ld bytes != PAGE_SIZE\n", sz);
-        }
-        return;
-    } else {
-        pr_warn("page_no %ld >= n_pages(%ld)\n", page_no, n_pages);
-    }
 }
 
 static int yssd_load_file(void){
@@ -244,6 +211,25 @@ static void delete_block_dev(struct yssd_block_dev* dev){
     }
 }
 
+static void test_hash(void){
+    struct y_key k1, k2, k3;
+    k1.ino = 2;
+    k1.typ = 'm';
+    strcpy(k1.name, "yssd");
+    k1.len = strlen(k1.name);
+    k2 = k1;
+    k3 = k1;
+    k2.ino = 11;
+    k3.len = 6;
+    pr_info("k1.len: %d\n", k1.len);
+    pr_info("k1[k1.len]==0: %d\n", k1.name[k1.len]==0);
+    pr_info("k1[k1.len-1]: %c\n", k1.name[k1.len-1]);
+    pr_info("k1.hash: %lx\n", y_key_hash(&k1));
+    pr_info("k2.hash: %lx\n", y_key_hash(&k2));
+    pr_info("k3.hash: %lx\n", y_key_hash(&k3));
+    pr_info("after hash: k1.name: %s\n", k1.name);
+}
+
 static int __init yssd_init(void)
 {
     int res;
@@ -269,6 +255,7 @@ static int __init yssd_init(void)
 
     test_y_rbkv_insert();
     test_y_rbkv_update();
+    test_hash();
 
     return 0;
 }

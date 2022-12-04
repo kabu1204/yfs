@@ -10,16 +10,16 @@ struct lsm_tree* lsm_tree_create(void){
     return lt;
 }
 
-struct y_value* lsm_tree_get(struct lsm_tree* lt, struct y_key* key){
+struct y_val_ptr lsm_tree_get(struct lsm_tree* lt, struct y_key* key){
     // TODO: re-consider thread safety
     struct y_rb_node* node;
+    struct y_val_ptr ptr;
     node = y_rb_find(&lt->mem_table, key);
     if(likely(node)){
-        if(node->kv.ptr.page_no==OBJECT_DEL) return NULL;
-        return vlog_get(&node->kv);
+        return node->kv.ptr;
     }
     // TODO: search in disk
-    return NULL;
+    return ptr;
 }
 
 void lsm_tree_del(struct lsm_tree* lt, struct y_key* key){
