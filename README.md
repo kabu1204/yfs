@@ -1,4 +1,4 @@
-# yfs
+# YFS
 
 A simple implementation of KEVIN.
 
@@ -8,7 +8,23 @@ yfs is responsible for translating POSIX syscalls to KV commands.
 
 yssd is responsible for indexing KV objects and transaction management.
 
-# overview
+---
+
+- [YFS](#yfs)
+- [Overview](#overview)
+- [YSSD](#yssd)
+  - [Disk layout](#disk-layout)
+  - [K2V index (LSM Tree)](#k2v-index-lsm-tree)
+    - [Table layout](#table-layout)
+      - [Meta block](#meta-block)
+    - [Page layout](#page-layout)
+    - [K2V index](#k2v-index)
+  - [Value Log](#value-log)
+    - [General Process](#general-process)
+    - [Garbage Collection](#garbage-collection)
+
+
+# Overview
 
 ![](./docs/assets/overview.jpg)
 
@@ -50,12 +66,12 @@ yssd is responsible for indexing KV objects and transaction management.
 
 ---
 
-How to use space freed by GC?
+How space freed by GC is used?
 
-vlog maintains two queue: queue1(from `head` to `tail1`) and queue2(from `end` to `tail2`).
+vlog maintains two queues: queue1(from `head` to `tail1`) and queue2(from `end` to `tail2`).
 
 1. queue1 and queue2 store persisted KVs.
-2. Flush will try to appending new KVs to queue2 first.
+2. Flush will try to append new KVs to queue2 first.
 3. GC always happens on queue1.
 4. GC will append valid KVs to queue1.
 
