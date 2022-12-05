@@ -3,9 +3,17 @@
 #include "linux/hashtable.h"
 #include "types.h"
 #include "phys_io.h"
+#include "linux/wait.h"
+#include "linux/kthread.h"
+#include "linux/sched.h"
+#include "linux/completion.h"
 
 struct value_log* vlog_create(void){
-    struct value_log* vlog = kzalloc(sizeof(struct value_log), GFP_KERNEL);
+    struct value_log* vlog = kmalloc(sizeof(struct value_log), GFP_KERNEL);
+    vlog->active = kzalloc(sizeof(struct hash_table), GFP_KERNEL);
+    vlog->inactive = NULL;
+    init_waitqueue_head(&vlog->waitq);
+    vlog->write_thread = kthread_create(write_deamon, vlog, "yssd write thread");
     return vlog;
 }
 
@@ -22,12 +30,13 @@ int vlog_append(struct value_log* vlog, struct y_k2v* k2v, struct y_value* val){
     v_entry_size = vlog_dump_size(k2v, val);
 
     if(v_entry_size+vlog->in_mem_size > Y_VLOG_FLUSH_SIZE){
-        vlog_flush(vlog);
+        vlog_wakeup_or_block(vlog);
+        // vlog_flush(vlog);
     }
 
     hash = y_key_hash(&k2v->key);
 
-    hash_for_each_possible(vlog->ht, cur, node, hash){
+    hash_for_each_possible(vlog->active->ht, cur, node, hash){
         if(y_key_cmp(&cur->k2v->key, &k2v->key)==0){
             cur->v = val;
             goto out;
@@ -38,7 +47,7 @@ int vlog_append(struct value_log* vlog, struct y_k2v* k2v, struct y_value* val){
     cur = kmalloc(sizeof(struct vlog_node), GFP_KERNEL);
     cur->k2v = k2v;
     cur->v = val;   // val is in ssd memory
-    hash_add(vlog->ht, &cur->node, hash);
+    hash_add(vlog->active->ht, &cur->node, hash);
     vlog->in_mem_size += v_entry_size;
 out:
     k2v->ptr.page_no = OBJECT_VAL_UNFLUSH;
@@ -51,7 +60,7 @@ struct y_value* vlog_get(struct value_log* vlog, struct y_k2v* k2v){
     struct vlog_node* cur;
     hash = y_key_hash(&k2v->key);
 
-    hash_for_each_possible(vlog->ht, cur, node, hash){
+    hash_for_each_possible(vlog->active->ht, cur, node, hash){
         if(y_key_cmp(&cur->k2v->key, &k2v->key)==0){
             return cur->v;
         }
@@ -103,20 +112,20 @@ void vlog_flush(struct value_log* vlog){
         buf_size = (buf_size + (Y_PAGE_SIZE-1)) & ~(size_t)(Y_PAGE_SIZE-1);
 
     char *buf = kmalloc(buf_size, GFP_KERNEL);
-    hash_for_each(vlog->ht, bkt, vnode, node){
+    hash_for_each(vlog->inactive->ht, bkt, vnode, node){
         vnode->offset = p;
         p += vlog_node_dump(vnode, buf+p);
     }
 
     // TODO: should get a lock here
     for(i=0; i<(buf_size/Y_PAGE_SIZE); ++i){
-        yssd_write_phys_page(buf+i*Y_PAGE_SIZE, vlog->tail+i);
+        yssd_write_phys_page(buf+i*Y_PAGE_SIZE, vlog->tail1+i);
     }
 
-    tail = vlog->tail;
-    vlog->tail += buf_size/Y_PAGE_SIZE;
+    tail = vlog->tail1;
+    vlog->tail1 += buf_size/Y_PAGE_SIZE;
 
-    hash_for_each_safe(vlog->ht, bkt, tmp, vnode, node){
+    hash_for_each_safe(vlog->inactive->ht, bkt, tmp, vnode, node){
         vnode->k2v->ptr.page_no = tail + (vnode->offset >> Y_PAGE_SHIFT);
         vnode->k2v->ptr.off = vnode->offset & (Y_PAGE_SHIFT-1);
         hash_del(&vnode->node);
@@ -127,6 +136,26 @@ void vlog_flush(struct value_log* vlog){
     }
 }
 
-void vlog_gc(struct value_log* vlog){
+void vlog_wakeup_or_block(struct value_log* vlog){
+    wait_event_interruptible(vlog->waitq, vlog->inactive==NULL);
+    vlog->inactive = vlog->active;
+    vlog->active = kzalloc(sizeof(struct hash_table), GFP_KERNEL);
+    wake_up_interruptible(&vlog->waitq);
+}
 
+static int write_deamon(void* arg)
+{
+    struct value_log* vlog = arg;
+    while(1){
+        wait_event_interruptible(vlog->waitq, vlog->inactive!=NULL);
+        vlog_flush(vlog);
+        kzfree(vlog->inactive);
+        vlog->inactive = NULL;
+        vlog->n_flush++;
+        if(vlog->n_flush % 5 == 0){
+            vlog_gc(vlog);
+        }
+        wake_up_interruptible(&vlog->waitq);
+    }
+    return 0;
 }
