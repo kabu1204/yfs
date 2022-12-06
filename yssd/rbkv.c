@@ -30,6 +30,9 @@ int y_rb_insert(struct rb_root* root, struct y_rb_node* elem)
 		if(res < 0) new = &((*new)->rb_left);
 		else if(res > 0) new = &((*new)->rb_right);
 		else {
+            if(unlikely(elem->kv.ptr.timestamp < this->kv.ptr.timestamp)){
+                return -1;
+            }
             this->kv.ptr = elem->kv.ptr;
             return 0;
         }

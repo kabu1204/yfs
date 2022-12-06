@@ -1,5 +1,6 @@
 #ifndef YSSD_VALUE_LOG_H
 #define YSSD_VALUE_LOG_H
+#include "lsmtree.h"
 #include "types.h"
 #include "linux/hashtable.h"
 #include "linux/kthread.h"
@@ -7,20 +8,31 @@
 #include "linux/wait.h"
 #include "linux/completion.h"
 
-#define VLOG_HASH_TABLE_BITS 13
-#define VLOG_N_FLUSH_PER_GC  5  
+#define VLOG_HASH_TABLE_BITS   13
+#define VLOG_N_FLUSH_PER_GC    5
+#define VLOG_RESET_IN_MEM_SIZE 4
+#define VLOG_GC_PAGES          (Y_VLOG_FLUSH_SIZE<<2) >> Y_PAGE_SHIFT
 
 struct vlog_node {
     struct y_k2v* k2v;
     struct y_value* v;
-
     /*
         used to temporarily record the 
         offset to the flush start page;
     */
     unsigned int offset;
+};
 
-    struct hlist_node node;
+struct vlog_list_node {
+    struct vlog_node vnode;
+
+    struct list_head lhead;
+};
+
+struct vlog_hlist_node {
+    struct vlog_node vnode;
+
+    struct hlist_node hnode;
 };
 
 struct value_log {
@@ -39,8 +51,11 @@ struct value_log {
         DECLARE_HASHTABLE(ht, VLOG_HASH_TABLE_BITS);
     } *active, *inactive;
 
-    // struct hlist_head ht1[1<<VLOG_HASH_TABLE_BITS];
-    // struct hlist_head ht2[1<<VLOG_HASH_TABLE_BITS];
+
+    struct lsm_tree* lt;
+
+    struct kmem_cache* vlist_slab;
+    struct kmem_cache* k2v_slab;
 }; 
 
 struct value_log* vlog_create(void);
@@ -53,12 +68,14 @@ void vlog_gc(struct value_log* vlog);
 
 struct y_value* vlog_get(struct value_log* vlog, struct y_k2v* k2v);
 
-unsigned long vlog_dump_size(struct y_k2v* k2v, struct y_value* val);
+unsigned long vlog_node_dump_size(struct y_k2v* k2v, struct y_value* val);
 
 unsigned long vlog_node_dump(struct vlog_node* vnode, char *buf);
 
+unsigned long vlog_node_load(char *buf, struct vlog_node* vnode);
+
 void vlog_wakeup_or_block(struct value_log* vlog);
 
-static int write_deamon(void* arg);
+int write_deamon(void* arg);
 
 #endif

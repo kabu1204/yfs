@@ -15,7 +15,7 @@ int y_key_cmp(struct y_key *left, struct y_key *right)
 
 unsigned int key_dump_size(struct y_k2v* k2v)
 {
-    unsigned int res=17; // typ(1) + ino(4) + val_ptr(12)
+    unsigned int res=25; // typ(1) + ino(4) + timestamp(8) + val_ptr(12)
     if(k2v->key.typ==Y_KV_META) res += 1 + k2v->key.len;
     else res += 4;
     return res;
@@ -46,4 +46,11 @@ inline unsigned long y_key_hash(struct y_key* key){
     hash = c + (hash << 6) + (hash << 16) - hash;
 
   return hash ^ (t + 0x517cc1b727220a95 + (hash << 6) + (hash >> 2));
+}
+
+inline unsigned long align_backward(unsigned long x, unsigned int shift){
+  unsigned long mask = (1<<shift) - 1;
+  if(x & mask)
+      x = ((x>>shift)+1)<<shift;
+  return x;
 }

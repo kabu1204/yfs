@@ -73,7 +73,7 @@ vlog maintains two queues: queue1(from `head` to `tail1`) and queue2(from `end` 
 1. queue1 and queue2 store persisted KVs.
 2. Flush will try to append new KVs to queue2 first.
 3. GC always happens on queue1.
-4. GC will append valid KVs to queue1.
+4. GC will also try to append valid KVs to queue2 first.
 
 
 ![](./docs/assets/vlog_gc_two_queue1.jpg)
