@@ -15,8 +15,14 @@ struct lsm_tree {
 
 struct lsm_tree* lsm_tree_create(void);
 
+/*
+    Can be called from access thread.
+*/
 struct y_val_ptr lsm_tree_get(struct lsm_tree* lt, struct y_key* key);
 
+/*
+    Can be called from access thread and vlog write thread.
+*/
 void lsm_tree_set(struct lsm_tree* lt, struct y_k2v* k2v);
 
 void lsm_tree_del(struct lsm_tree* lt, struct y_key* key);

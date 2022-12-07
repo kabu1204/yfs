@@ -75,8 +75,8 @@ void vlog_gc(struct value_log* vlog){
     unsigned int total_pages, npages, count=0;
     unsigned int nbytes, p=0;
     unsigned int page_no, offset;
-    struct y_val_ptr ptr;
     char *buf;
+    struct y_val_ptr ptr;
     struct vlog_list_node* vlnode;
     struct kmem_cache* vlist_slab;
     struct lsm_tree* lt;
@@ -134,10 +134,12 @@ void vlog_gc(struct value_log* vlog){
     */
     vlog_flush_gc(vlog, &vlnodes);
 
+    write_lock(&vlog->rwlock);
     if(head==vlog->tail1){
         vlog->tail1 = vlog->tail2;
         vlog->head = vlog->tail2 = n_pages-1;
     } else {
         vlog->head = head;
     }
+    write_unlock(&vlog->rwlock);
 }
