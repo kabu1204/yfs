@@ -15,8 +15,9 @@
 #define VLOG_GC_PAGES          (Y_VLOG_FLUSH_SIZE<<2) >> Y_PAGE_SHIFT
 
 struct vlog_node {
-    struct y_k2v* k2v;
-    struct y_value* v;
+    struct y_key key;
+    struct y_value v;
+    unsigned long timestamp;
     /*
         used to temporarily record the 
         offset to the flush start page;
@@ -54,21 +55,23 @@ struct value_log {
 
     struct lsm_tree* lt;
 
-    struct kmem_cache* vlist_slab;
-    struct kmem_cache* k2v_slab;
+    struct kmem_cache* vl_slab;
+    struct kmem_cache* vh_slab;
 }; 
 
-struct value_log* vlog_create(void);
+void vlog_init(struct value_log* vlog);
 
-int vlog_append(struct value_log* vlog, struct y_k2v* k2v, struct y_value* val);
+int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, unsigned long timestamp);
 
 void vlog_flush(struct value_log* vlog);
 
 void vlog_gc(struct value_log* vlog);
 
-int vlog_get(struct value_log* vlog, struct y_k2v* k2v, struct y_value* v);
+int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, struct y_value* v);
 
-unsigned long vlog_node_dump_size(struct y_k2v* k2v, struct y_value* val);
+void valcpy(struct y_value* to, const struct y_value* from);
+
+unsigned long vlog_dump_size(struct y_key* k2v, struct y_value* val);
 
 unsigned long vlog_node_dump(struct vlog_node* vnode, char *buf);
 

@@ -10,8 +10,7 @@
 #include "linux/completion.h"
 #include "linux/delay.h"
 
-struct value_log* vlog_create(void){
-    struct value_log* vlog = kmalloc(sizeof(struct value_log), GFP_KERNEL);
+void vlog_init(struct value_log* vlog){
     vlog->in_mem_size = VLOG_RESET_IN_MEM_SIZE;
     vlog->active = kzalloc(sizeof(struct hash_table), GFP_KERNEL);
     vlog->inactive = NULL;
@@ -20,8 +19,8 @@ struct value_log* vlog_create(void){
     rwlock_init(&vlog->act_lk);
     rwlock_init(&vlog->inact_lk);
     vlog->write_thread = kthread_create(write_deamon, vlog, "yssd write thread");
-    vlog->vlist_slab = kmem_cache_create("vlog_list_node_cache", sizeof(struct vlog_list_node), 0, SLAB_HWCACHE_ALIGN, NULL);
-    return vlog;
+    vlog->vl_slab = kmem_cache_create("vlog_list_node_cache", sizeof(struct vlog_list_node), 0, SLAB_HWCACHE_ALIGN, NULL);
+    vlog->vh_slab = kmem_cache_create("vlog_hlist_node_cache", sizeof(struct vlog_hlist_node), 0, SLAB_HWCACHE_ALIGN, NULL);
 }
 
 /*
@@ -29,25 +28,32 @@ struct value_log* vlog_create(void){
     Small variable-length values will be packed into the key.
     The most common kinds of values here are: (1) >4KB (2) 256B (inode info)
 
+    vlog_append will memcpy val->buf.
+
     Concurrent-UNSAFE.
 */
-int vlog_append(struct value_log* vlog, struct y_k2v* k2v, struct y_value* val){
+int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, unsigned long timestamp){
     struct vlog_hlist_node* cur;
     unsigned int v_entry_size;
     unsigned long hash;
 
-    v_entry_size = vlog_node_dump_size(k2v, val);
+    v_entry_size = vlog_dump_size(key, val);
 
     if(v_entry_size+vlog->in_mem_size > Y_VLOG_FLUSH_SIZE){
         vlog_wakeup_or_block(vlog);
     }
 
-    hash = y_key_hash(&k2v->key);
+    hash = y_key_hash(key);
 
     read_lock(&vlog->act_lk);
     hash_for_each_possible(vlog->active->ht, cur, hnode, hash){
-        if(y_key_cmp(&cur->vnode.k2v->key, &k2v->key)==0){
-            cur->vnode.v = val;
+        if(y_key_cmp(&cur->vnode.key, key)==0){
+            if(unlikely(timestamp < cur->vnode.timestamp)){
+                pr_warn("invalid timestamp\n"); 
+                return -1;
+            }
+            cur->vnode.timestamp = timestamp;
+            valcpy(&cur->vnode.v, val);
             read_unlock(&vlog->act_lk);
             goto out;
         }
@@ -55,15 +61,15 @@ int vlog_append(struct value_log* vlog, struct y_k2v* k2v, struct y_value* val){
     read_unlock(&vlog->act_lk);
 
     /* not exist in hash table */
-    cur = kmalloc(sizeof(struct vlog_hlist_node), GFP_KERNEL);
-    cur->vnode.k2v = k2v;
-    cur->vnode.v = val;   // val is in ssd memory
+    cur = kmem_cache_alloc(vlog->vh_slab, GFP_KERNEL);
+    cur->vnode.key = *key;
+    cur->vnode.v.len = val->len;
+    memcpy(cur->vnode.v.buf, val->buf, val->len);
     write_lock(&vlog->act_lk);
     hash_add(vlog->active->ht, &cur->hnode, hash);
     write_unlock(&vlog->act_lk);
     vlog->in_mem_size += v_entry_size;
 out:
-    k2v->ptr.page_no = OBJECT_VAL_UNFLUSH;
     return 1;
 }
 
@@ -71,27 +77,25 @@ out:
     vlog_get() will assume the caller is holding a GET level lock,
     i.e. no concurrent SET(k2v, other value) would happen.
 */
-int vlog_get(struct value_log* vlog, struct y_k2v* k2v, struct y_value* v){
+int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, struct y_value* v){
     unsigned long hash;
     struct vlog_hlist_node* cur;
-    struct y_val_ptr ptr;
     int trial;
     char *buf;
-    hash = y_key_hash(&k2v->key);
+    hash = y_key_hash(key);
 
-    if(k2v->ptr.page_no!=OBJECT_VAL_UNFLUSH){
-        ptr = k2v->ptr;
+    if(ptr.page_no!=OBJECT_VAL_UNFLUSH){
         goto slow;
     }
 
     read_lock(&vlog->act_lk);
     hash_for_each_possible(vlog->active->ht, cur, hnode, hash){
-        if(y_key_cmp(&cur->vnode.k2v->key, &k2v->key)==0){
-            v->len = cur->vnode.v->len;
+        if(y_key_cmp(&cur->vnode.key, key)==0){
+            v->len = cur->vnode.v.len;
             if(!v->buf){
                 v->buf = kzalloc(v->len, GFP_KERNEL);
             }
-            memcpy(v->buf, cur->vnode.v->buf, v->len);
+            memcpy(v->buf, cur->vnode.v.buf, v->len);
             read_unlock(&vlog->act_lk);
             return 1;
         }
@@ -104,12 +108,12 @@ int vlog_get(struct value_log* vlog, struct y_k2v* k2v, struct y_value* v){
         goto slow;
     }
     hash_for_each_possible(vlog->inactive->ht, cur, hnode, hash){
-        if(y_key_cmp(&cur->vnode.k2v->key, &k2v->key)==0){
-            v->len = cur->vnode.v->len;
+        if(y_key_cmp(&cur->vnode.key, key)==0){
+            v->len = cur->vnode.v.len;
             if(!v->buf){
                 v->buf = kzalloc(v->len, GFP_KERNEL);
             }
-            memcpy(v->buf, cur->vnode.v->buf, v->len);
+            memcpy(v->buf, cur->vnode.v.buf, v->len);
             read_unlock(&vlog->inact_lk);
             return 1;
         }
@@ -126,14 +130,14 @@ int vlog_get(struct value_log* vlog, struct y_k2v* k2v, struct y_value* v){
     trial=3;
     while(trial--){
         msleep(5);
-        ptr = lsm_tree_get(vlog->lt, &k2v->key);
+        ptr = lsm_tree_get(vlog->lt, key);
         if(ptr.page_no > OBJECT_VAL_UNFLUSH){
             break;
         }
     }
     if(ptr.page_no<=OBJECT_VAL_UNFLUSH){
         buf = kmalloc(sizeof(struct y_key)+24, GFP_KERNEL);
-        sprint_y_key(buf, &k2v->key);
+        sprint_y_key(buf, key);
         pr_warn("incorrect page_no: %u, key=%s\n", ptr.page_no, buf);
         kfree(buf);
         return -1;
@@ -144,7 +148,7 @@ slow:
     if(unlikely(ptr.page_no<=vlog->tail1 || (ptr.page_no >= vlog->tail2 && ptr.page_no<vlog->head))){
         read_unlock(&vlog->rwlock);
         buf = kmalloc(sizeof(struct y_key)+24, GFP_KERNEL);
-        sprint_y_key(buf, &k2v->key);
+        sprint_y_key(buf, key);
         pr_warn("incorrect page_no: %u, key=%s\n", ptr.page_no, buf);
         kfree(buf);
         return -1;
@@ -152,8 +156,8 @@ slow:
     read_unlock(&vlog->rwlock);
     buf = kzalloc(Y_PAGE_SIZE<<1, GFP_KERNEL);
     yssd_read_phys_pages(buf, ptr.page_no, 2);
-    if(unlikely(vlog_read_value(buf, &k2v->key, v)==0)){
-        sprint_y_key(buf, &k2v->key);
+    if(unlikely(vlog_read_value(buf, key, v)==0)){
+        sprint_y_key(buf, key);
         pr_err("unmatched KV: key=%s\n", buf);
         kzfree(buf);
         return -1;
@@ -162,10 +166,10 @@ slow:
     return 0;
 }
 
-unsigned long vlog_dump_size(struct y_k2v* k2v, struct y_value* val){
-    unsigned long res = 10; // start_identifier '#'(1) + typ(1) + ino(4) + val_len(4)
+unsigned long vlog_dump_size(struct y_key* key, struct y_value* val){
+    unsigned long res = 18; // start_identifier '#'(1) + typ(1) + ino(4) + val_len(4) + timestamp(8)
     res += val->len;
-    if(k2v->key.typ==Y_KV_META) res += 1 + k2v->key.len;
+    if(key->typ==Y_KV_META) res += 1 + key->len;
     else res += 4;
     return res;
 }
@@ -173,47 +177,52 @@ unsigned long vlog_dump_size(struct y_k2v* k2v, struct y_value* val){
 unsigned long vlog_node_dump(struct vlog_node* vnode, char *buf){
     unsigned long p = 1;
     buf[p++] = '#';
-    buf[p++] = vnode->k2v->key.typ;
-    *(unsigned int*)(buf + p) = vnode->k2v->key.ino;
-    if(vnode->k2v->key.typ==Y_KV_META){
-        *(char*)(buf + p + 4) = (char)(vnode->k2v->key.len);
+    *(unsigned long*)(buf + p) = vnode->timestamp;
+    p += 8;
+    buf[p++] = vnode->key.typ;
+    *(unsigned int*)(buf + p) = vnode->key.ino;
+    if(vnode->key.typ==Y_KV_META){
+        *(char*)(buf + p + 4) = (char)(vnode->key.len);
         p += 5;
-        memcpy(buf+p, vnode->k2v->key.name, vnode->k2v->key.len);
-        p += vnode->k2v->key.len;
+        memcpy(buf+p, vnode->key.name, vnode->key.len);
+        p += vnode->key.len;
     } else {
-        *(unsigned int*)(buf + p + 4) = vnode->k2v->key.len;
+        *(unsigned int*)(buf + p + 4) = vnode->key.len;
         p += 8;
     }
-    *(unsigned int*)(buf + p) = vnode->v->len;
+    *(unsigned int*)(buf + p) = vnode->v.len;
     p += 4;
-    memcpy(buf+p, vnode->v->buf, vnode->v->len);
-    p += vnode->v->len;
+    memcpy(buf+p, vnode->v.buf, vnode->v.len);
+    p += vnode->v.len;
     return p;
 }
 
 unsigned long vlog_node_load(char *buf, struct vlog_node* vnode){
     unsigned long p=1;
-    struct y_k2v* k2v;
-    struct y_value* v;
+    struct y_key* key = &vnode->key;
+    struct y_value* v = &vnode->v;
     if(unlikely(buf[0]!='#')) return 0;
 
-    k2v = kmem_cache_alloc(k2v_slab, GFP_KERNEL);
-    v = kmalloc(sizeof(struct y_value), GFP_KERNEL);
-    k2v->key.typ =buf[p++];
-    k2v->key.ino = *(unsigned int*)(buf+p);
+    vnode->timestamp = *(unsigned long*)(buf+p);
+    p += 8;
+    key->typ = buf[p++];
+    key->ino = *(unsigned int*)(buf+p);
     p += 4;
-    if(k2v->key.typ=='m'){
-        k2v->key.len = *(char*)(buf+p);
+    if(key->typ=='m'){
+        key->len = *(char*)(buf+p);
         ++p;
-        memcpy(k2v->key.name, buf+p, k2v->key.len);
-        p+=k2v->key.len;
+        memcpy(key->name, buf+p, key->len);
+        p+=key->len;
     } else {
-        k2v->key.len = *(unsigned int*)(buf+p);
+        key->len = *(unsigned int*)(buf+p);
         p+=4;
     }
     v->len = *(unsigned int*)(buf+p);
     p += 4;
-    v->buf = kmalloc(v->len, GFP_KERNEL);
+    if(unlikely(v->buf)){
+        kzfree(v->buf);
+    }
+    v->buf = kzalloc(v->len, GFP_KERNEL);
     memcpy(v->buf, buf+p, v->len);
     p += v->len;
     return p;
@@ -222,6 +231,7 @@ unsigned long vlog_node_load(char *buf, struct vlog_node* vnode){
 unsigned long vlog_read_value(char *buf, struct y_key* key, struct y_value* v){
     unsigned long p=1;
     if(unlikely(buf[0]!='#')) return 0;
+    p += 8; // timestamp
 
     if(unlikely(key->typ != buf[p++])){
         pr_err("unmatch typ: expect %c, got %c\n", key->typ, buf[p-1]);
@@ -260,6 +270,15 @@ unsigned long vlog_read_value(char *buf, struct y_key* key, struct y_value* v){
     memcpy(v->buf, buf+p, v->len);
     p += v->len;
     return p;
+}
+
+void valcpy(struct y_value* to, const struct y_value* from){
+    if(to->len < from->len){
+        kzfree(to->buf);
+        kzalloc(from->len, GFP_KERNEL);
+    }
+    to->len = from->len;
+    memcpy(to->buf, from->buf, from->len);
 }
 
 void vlog_flush(struct value_log* vlog){
@@ -310,16 +329,15 @@ void vlog_flush(struct value_log* vlog){
 
     hash_for_each_safe(inact->ht, bkt, tmp, vhnode, hnode){
         struct vlog_node* vnode = &vhnode->vnode;
-        
-        vnode->k2v->ptr.page_no = tail + 1 + (vnode->offset >> Y_PAGE_SHIFT);
-        vnode->k2v->ptr.off = vnode->offset & (Y_PAGE_SHIFT-1);
-        lsm_tree_set(lt, vnode->k2v);
+        struct y_val_ptr ptr = {
+            .page_no = tail + 1 + (vnode->offset >> Y_PAGE_SHIFT),
+            .off = vnode->offset & (Y_PAGE_SHIFT-1),
+        };
+        lsm_tree_get_and_set(lt, &vnode->key, ptr, vnode->timestamp);
         hash_del(&vhnode->hnode);
 
-        kfree(vnode->k2v);
-        kfree(vnode->v->buf);
-        kfree(vnode->v);
-        kfree(vhnode);
+        kzfree(vnode->v.buf);
+        kmem_cache_free(vlog->vh_slab, vhnode);
     }
     kzfree(inact);
 }

@@ -69,12 +69,12 @@ struct y_value {
 struct y_val_ptr {
     unsigned int page_no;
     unsigned int off;
-    unsigned long timestamp;
 };
 
 struct y_k2v {
     struct y_key key;
     struct y_val_ptr ptr;
+    unsigned long timestamp;
 };
 
 struct y_io_req {

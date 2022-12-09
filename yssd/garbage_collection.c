@@ -5,9 +5,7 @@
 #include "linux/slab.h"
 
 inline void full_free_vlnode(struct vlog_list_node* vlnode, struct kmem_cache* vlist_slab){
-    kfree(vlnode->vnode.v->buf);
-    kfree(vlnode->vnode.v);
-    kmem_cache_free(k2v_slab, vlnode->vnode.k2v);
+    kzfree(vlnode->vnode.v.buf);
     kmem_cache_free(vlist_slab, vlnode);
 }
 
@@ -20,9 +18,10 @@ void vlog_flush_gc(struct value_log* vlog, struct list_head* vlnodes){
     struct lsm_tree* lt;
     struct vlog_list_node* vlnode;
     struct list_head *cur, *tmp, *prev=NULL;
-    struct kmem_cache* vlist_slab;
+    struct kmem_cache* vl_slab;
+    struct y_val_ptr ptr;
     buf = kzalloc(Y_VLOG_FLUSH_SIZE, GFP_KERNEL);
-    vlist_slab = vlog->vlist_slab;
+    vl_slab = vlog->vl_slab;
     lt = vlog->lt;
 
     while(!list_empty(vlnodes)){
@@ -30,7 +29,7 @@ void vlog_flush_gc(struct value_log* vlog, struct list_head* vlnodes){
         // 1. dump to buf
         list_for_each(cur, vlnodes){
             vlnode = container_of(cur, struct vlog_list_node, lhead);
-            if(unlikely(p + 4 + vlog_node_dump_size(vlnode->vnode.k2v, vlnode->vnode.v)>Y_VLOG_FLUSH_SIZE)){
+            if(unlikely(p + 4 + vlog_dump_size(&vlnode->vnode.key, &vlnode->vnode.v)>Y_VLOG_FLUSH_SIZE)){
                 break;
             }
             vlnode->vnode.offset = p;
@@ -52,18 +51,18 @@ void vlog_flush_gc(struct value_log* vlog, struct list_head* vlnodes){
         // TODO: consider order
         yssd_write_phys_pages(buf, tail+1, npages);
         memset(buf, 0, p);
-        prev=cur;
+        prev = cur;
 
         // 3. update list
         list_for_each_safe(cur, tmp, vlnodes){
             if(cur==prev) break;
             vlnode = container_of(cur, struct vlog_list_node, lhead);
             off = vlnode->vnode.offset;
-            vlnode->vnode.k2v->ptr.page_no = tail + 1 + (off >> Y_PAGE_SHIFT);
-            vlnode->vnode.k2v->ptr.off = off & (Y_PAGE_SIZE-1);
+            ptr.page_no = tail + 1 + (off >> Y_PAGE_SHIFT);
+            ptr.off = off & (Y_PAGE_SIZE-1);
             list_del(cur);
-            lsm_tree_set(lt, vlnode->vnode.k2v);
-            full_free_vlnode(vlnode, vlist_slab);
+            lsm_tree_get_and_set(lt, &vlnode->vnode.key, ptr, vlnode->vnode.timestamp);
+            full_free_vlnode(vlnode, vl_slab);
         }
     }
 
@@ -78,12 +77,12 @@ void vlog_gc(struct value_log* vlog){
     char *buf;
     struct y_val_ptr ptr;
     struct vlog_list_node* vlnode;
-    struct kmem_cache* vlist_slab;
+    struct kmem_cache* vl_slab;
     struct lsm_tree* lt;
     LIST_HEAD(vlnodes);
     head = vlog->head;
     lt = vlog->lt;
-    vlist_slab = vlog->vlist_slab;
+    vl_slab = vlog->vl_slab;
 
     total_pages = head - vlog->tail1;
     total_pages = total_pages>=VLOG_GC_PAGES ? VLOG_GC_PAGES : total_pages;
@@ -101,11 +100,11 @@ void vlog_gc(struct value_log* vlog){
         yssd_read_phys_pages(buf, head+1, npages);
         while(p+VLOG_RESET_IN_MEM_SIZE<nbytes){
             int n;
-            vlnode = kmem_cache_alloc(vlog->vlist_slab, GFP_KERNEL);
+            vlnode = kmem_cache_alloc(vl_slab, GFP_KERNEL);
 
             n = vlog_node_load(buf+p, &vlnode->vnode);
             if(unlikely(n==0)){
-                kmem_cache_free(vlog->vlist_slab, vlnode);
+                kmem_cache_free(vl_slab, vlnode);
                 break;
             }
 
@@ -113,14 +112,13 @@ void vlog_gc(struct value_log* vlog){
             offset = p & (Y_PAGE_SIZE-1);
             p += n;
 
-            ptr = lsm_tree_get(lt, &vlnode->vnode.k2v->key);
+            ptr = lsm_tree_get(lt, &vlnode->vnode.key);
             if(ptr.page_no != page_no && ptr.off != offset){
                 // deleted or out-of-date value
-                full_free_vlnode(vlnode, vlist_slab);
+                full_free_vlnode(vlnode, vl_slab);
                 continue;
             }
 
-            vlnode->vnode.k2v->ptr.timestamp = ptr.timestamp;
             list_add_tail(&vlnode->lhead, &vlnodes);
         }
     }
