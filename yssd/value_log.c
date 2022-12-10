@@ -9,11 +9,17 @@
 #include "linux/sched.h"
 #include "linux/completion.h"
 #include "linux/delay.h"
+#include "linux/mm.h"
+
+static unsigned long counter = 0;
+static unsigned long flush_cnt = 0;
+
 
 void vlog_init(struct value_log* vlog){
     vlog->in_mem_size = VLOG_RESET_IN_MEM_SIZE;
-    vlog->active = kzalloc(sizeof(struct hash_table), GFP_KERNEL);
+    vlog->active = kvzalloc(sizeof(struct hash_table), GFP_KERNEL);
     vlog->inactive = NULL;
+    vlog->n_flush = 0;
     init_waitqueue_head(&vlog->waitq);
     rwlock_init(&vlog->rwlock);
     rwlock_init(&vlog->act_lk);
@@ -21,6 +27,9 @@ void vlog_init(struct value_log* vlog){
     vlog->write_thread = kthread_create(write_deamon, vlog, "yssd write thread");
     vlog->vl_slab = kmem_cache_create("vlog_list_node_cache", sizeof(struct vlog_list_node), 0, SLAB_HWCACHE_ALIGN, NULL);
     vlog->vh_slab = kmem_cache_create("vlog_hlist_node_cache", sizeof(struct vlog_hlist_node), 0, SLAB_HWCACHE_ALIGN, NULL);
+    pr_info("[vlog]VLOG_FLUSH_SIZE: %lu B\n", Y_VLOG_FLUSH_SIZE);
+    pr_info("[vlog]counter: %lu\n", counter);
+    pr_info("[vlog]counter==0: %d\n", counter==0);
 }
 
 /*
@@ -37,10 +46,22 @@ int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, 
     unsigned int v_entry_size;
     unsigned long hash;
 
+    if(unlikely(key->typ!='m')){
+        pr_warn("append data object\n");
+    }
+
     v_entry_size = vlog_dump_size(key, val);
 
+    if(counter==0){
+        pr_info("[vlog]in_mem_size: %lu B", vlog->in_mem_size);
+    }
+
+    if((counter % 4096)==0){
+        pr_info("[vlog]in_mem_size: %luKB", vlog->in_mem_size/1024);
+    }
     if(v_entry_size+vlog->in_mem_size > Y_VLOG_FLUSH_SIZE){
-        vlog_wakeup_or_block(vlog);
+        vlog_flush_sync(vlog);
+        // vlog_wakeup_or_block(vlog);
     }
 
     hash = y_key_hash(key);
@@ -53,6 +74,7 @@ int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, 
                 return -1;
             }
             cur->vnode.timestamp = timestamp;
+            vlog->in_mem_size += val->len - cur->vnode.v.len;
             valcpy(&cur->vnode.v, val);
             read_unlock(&vlog->act_lk);
             goto out;
@@ -64,11 +86,13 @@ int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, 
     cur = kmem_cache_alloc(vlog->vh_slab, GFP_KERNEL);
     cur->vnode.key = *key;
     cur->vnode.v.len = val->len;
+    cur->vnode.v.buf = kzalloc(val->len, GFP_KERNEL);
     memcpy(cur->vnode.v.buf, val->buf, val->len);
     write_lock(&vlog->act_lk);
     hash_add(vlog->active->ht, &cur->hnode, hash);
     write_unlock(&vlog->act_lk);
     vlog->in_mem_size += v_entry_size;
+    ++counter;
 out:
     return 1;
 }
@@ -93,6 +117,7 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
         if(y_key_cmp(&cur->vnode.key, key)==0){
             v->len = cur->vnode.v.len;
             if(!v->buf){
+                pr_warn("allocating space for v->buf: %uB\n", v->len);
                 v->buf = kzalloc(v->len, GFP_KERNEL);
             }
             memcpy(v->buf, cur->vnode.v.buf, v->len);
@@ -111,6 +136,7 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
         if(y_key_cmp(&cur->vnode.key, key)==0){
             v->len = cur->vnode.v.len;
             if(!v->buf){
+                pr_warn("allocating space for v->buf: %uB\n", v->len);
                 v->buf = kzalloc(v->len, GFP_KERNEL);
             }
             memcpy(v->buf, cur->vnode.v.buf, v->len);
@@ -175,23 +201,30 @@ unsigned long vlog_dump_size(struct y_key* key, struct y_value* val){
 }
 
 unsigned long vlog_node_dump(struct vlog_node* vnode, char *buf){
+    // 1 + 8 + 1 + 4 + 1 + klen + 4 + vlen
     unsigned long p = 1;
-    buf[p++] = '#';
+    buf[0] = '#';
     *(unsigned long*)(buf + p) = vnode->timestamp;
     p += 8;
     buf[p++] = vnode->key.typ;
     *(unsigned int*)(buf + p) = vnode->key.ino;
+    p += 4;
     if(vnode->key.typ==Y_KV_META){
-        *(char*)(buf + p + 4) = (char)(vnode->key.len);
-        p += 5;
+        *(char*)(buf + p) = (char)(vnode->key.len);
+        p += 1;
         memcpy(buf+p, vnode->key.name, vnode->key.len);
         p += vnode->key.len;
     } else {
-        *(unsigned int*)(buf + p + 4) = vnode->key.len;
-        p += 8;
+        *(unsigned int*)(buf + p) = vnode->key.len;
+        p += 4;
     }
     *(unsigned int*)(buf + p) = vnode->v.len;
     p += 4;
+    if(flush_cnt >= counter) {
+        pr_info("p=%lu\n", p);
+        pr_info("buf+p=%p\n", buf+p);
+        pr_info("p+vlen=%lu\n", p+vnode->v.len);
+    }
     memcpy(buf+p, vnode->v.buf, vnode->v.len);
     p += vnode->v.len;
     return p;
@@ -294,17 +327,29 @@ void vlog_flush(struct value_log* vlog){
     struct hash_table* inact;
 
     lt = vlog->lt;
-    buf_size = vlog->in_mem_size;
+    buf_size = vlog->inact_size;
     buf_size = align_backward(buf_size, Y_PAGE_SHIFT);
     npages = buf_size >> Y_PAGE_SHIFT;
 
-    buf = kzalloc(buf_size, GFP_KERNEL);
+    pr_info("[flush] inactive hashtable size = %luB\n", vlog->inact_size);
+    pr_info("[flush] buf_size = %lu\n", buf_size);
+    pr_info("[flush] npages   = %u\n", npages);
+
+    buf = vzalloc(buf_size);
     hash_for_each(vlog->inactive->ht, bkt, vhnode, hnode){
         vhnode->vnode.offset = p;
+        // pr_info("[flush] p=%u\n", p);
+        ++flush_cnt;
+        if(flush_cnt >= counter) {
+            pr_info("p=%lu\n", p);
+            pr_info("%lu %lu\n", counter, flush_cnt);
+        }
         p += vlog_node_dump(&vhnode->vnode, buf+p);
     }
 
     *(unsigned int*)(&buf[buf_size-4]) = npages;
+
+    pr_info("[flush] dump to mem buffer finished\n");
 
     /*
         Do not need a rwlock here, because flushed 
@@ -320,7 +365,9 @@ void vlog_flush(struct value_log* vlog){
 
     yssd_write_phys_pages(buf, tail+1, npages);
 
-    kzfree(buf);
+    vfree(buf);
+
+    pr_info("[flush] write to physical pages finished\n");
 
     write_lock(&vlog->inact_lk);
     inact = vlog->inactive;
@@ -339,13 +386,26 @@ void vlog_flush(struct value_log* vlog){
         kzfree(vnode->v.buf);
         kmem_cache_free(vlog->vh_slab, vhnode);
     }
-    kzfree(inact);
+    kvfree(inact);
+    pr_info("[flush] free inactive hashtable finished\n");
+}
+
+void vlog_flush_sync(struct value_log* vlog){
+    pr_info("flush triggered\n");
+    vlog->inactive = vlog->active;
+    vlog->active = kvzalloc(sizeof(struct hash_table), GFP_KERNEL);
+    vlog->inact_size = vlog->in_mem_size;
+    vlog->in_mem_size = VLOG_RESET_IN_MEM_SIZE;
+    wake_up_interruptible(&vlog->waitq);
+    wait_event_interruptible(vlog->waitq, vlog->inactive==NULL);
 }
 
 void vlog_wakeup_or_block(struct value_log* vlog){
+    pr_info("flush triggered\n");
     wait_event_interruptible(vlog->waitq, vlog->inactive==NULL);
     vlog->inactive = vlog->active;
-    vlog->active = kzalloc(sizeof(struct hash_table), GFP_KERNEL);
+    vlog->active = kvzalloc(sizeof(struct hash_table), GFP_KERNEL);
+    vlog->inact_size = vlog->in_mem_size;
     vlog->in_mem_size = VLOG_RESET_IN_MEM_SIZE;
     wake_up_interruptible(&vlog->waitq);
 }
@@ -355,8 +415,10 @@ int write_deamon(void* arg)
     struct value_log* vlog = arg;
     while(1){
         wait_event_interruptible(vlog->waitq, vlog->inactive!=NULL);
+        pr_info("write thread wake up\n");
         vlog_flush(vlog);
-        vlog->n_flush++;
+        pr_info("[flush] flush finished\n");
+        ++vlog->n_flush;
         if(vlog->n_flush % 5 == 0){
             vlog_gc(vlog);
         }

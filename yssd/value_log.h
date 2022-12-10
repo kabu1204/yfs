@@ -41,6 +41,7 @@ struct value_log {
     unsigned int tail1, tail2;
     unsigned int head;
     unsigned long in_mem_size;
+    unsigned long inact_size;
 
     unsigned int n_flush;
 
@@ -71,13 +72,15 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
 
 void valcpy(struct y_value* to, const struct y_value* from);
 
-unsigned long vlog_dump_size(struct y_key* k2v, struct y_value* val);
+unsigned long vlog_dump_size(struct y_key* key, struct y_value* val);
 
 unsigned long vlog_node_dump(struct vlog_node* vnode, char *buf);
 
 unsigned long vlog_node_load(char *buf, struct vlog_node* vnode);
 
 unsigned long vlog_read_value(char *buf, struct y_key* key, struct y_value* v);
+
+void vlog_flush_sync(struct value_log* vlog);
 
 void vlog_wakeup_or_block(struct value_log* vlog);
 

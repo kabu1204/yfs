@@ -3,6 +3,16 @@
 #include "types.h"
 #include "value_log.h"
 
+extern unsigned long n_pages;
+
+struct lsm_tree lt;
+struct value_log vlog;
+struct mutex glk;
+
+struct y_val_ptr unflush_ptr = {
+    .page_no = OBJECT_VAL_UNFLUSH
+};
+
 void kv_init(){
     lsm_tree_init(&lt);
     vlog_init(&vlog);
@@ -10,6 +20,7 @@ void kv_init(){
 
     lt.last_k2v_page_no = OBJECT_VAL_UNFLUSH;
     vlog.lt = &lt;
+    vlog.head = vlog.tail1 = vlog.tail2 = n_pages-1;
     wake_up_process(vlog.write_thread);
 }
 

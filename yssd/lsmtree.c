@@ -40,7 +40,6 @@ void lsm_tree_set(struct lsm_tree* lt, struct y_key* key, struct y_val_ptr ptr, 
 
 int lsm_tree_get_and_set(struct lsm_tree* lt, struct y_key* key, struct y_val_ptr ptr, unsigned long timestamp){
     struct y_rb_node* node;
-    struct y_val_ptr tmp;
     write_lock(&lt->lk);
     node = y_rb_find(&lt->mem_table, key);
     if(likely(node)){
@@ -51,6 +50,7 @@ int lsm_tree_get_and_set(struct lsm_tree* lt, struct y_key* key, struct y_val_pt
     } else {
         // TODO: search in disk
     }
+    node = kmem_cache_alloc(lt->rb_node_slab, GFP_KERNEL);
     node->kv.key = *key;
     node->kv.ptr = ptr;
     node->kv.timestamp = timestamp;

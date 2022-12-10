@@ -14,7 +14,7 @@
 #define Y_PAGE_SIZE  PAGE_SIZE          // 4KB minimum r/w unit
 #define Y_BLOCK_SIZE (Y_PAGE_SIZE<<3)   // 64KB
 #define Y_TABLE_SIZE (Y_BLOCK_SIZE*32)  // 2MB
-#define Y_VLOG_FLUSH_SIZE  1ul<<33      // 8MB
+#define Y_VLOG_FLUSH_SIZE  1ul<<23      // 8MB
 #define SMALL_OBJECT_SIZE  Y_PAGE_SIZE
 
 #define Y_KV_SUPERBLOCK ('s')
@@ -95,12 +95,6 @@ struct y_io_req {
     };
 };
 
-struct file* fp;
-unsigned long n_sectors;
-unsigned long n_bytes;
-unsigned long n_pages;
-
-struct kmem_cache* k2v_slab;
 
 #define print_y_key(key) {pr_info("%c:%u%s%s\n", key->typ, key->ino, (key->name[0]!='\0'?":":""), key->name);}
 #define sprint_y_key(buf, key) {snprintf(buf, sizeof(struct y_key)+24, "%c:%u%s%s", (key)->typ, (key)->ino, ((key)->name[0]!='\0'?":":""), (key)->name);}

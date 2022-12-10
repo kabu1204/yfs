@@ -4,6 +4,8 @@
 #include "value_log.h"
 #include "linux/slab.h"
 
+extern unsigned long n_pages;
+
 inline void full_free_vlnode(struct vlog_list_node* vlnode, struct kmem_cache* vlist_slab){
     kzfree(vlnode->vnode.v.buf);
     kmem_cache_free(vlist_slab, vlnode);

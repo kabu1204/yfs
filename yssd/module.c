@@ -12,6 +12,8 @@
 #include <linux/random.h>
 #include "rbkv.h"
 #include "types.h"
+#include "kv.h"
+#include "value_log.h"
 
 #define YSSD_MAJOR 240
 #define YSSD_DEV_NAME "yssd"
@@ -21,6 +23,11 @@ module_param(yssd_file, charp, 0660);
 MODULE_PARM_DESC(yssd_file, "file to be treated as a pseudo ssd");
 
 static char g_buf[PAGE_SIZE+1];
+
+struct file* fp;
+unsigned long n_sectors;
+unsigned long n_bytes;
+unsigned long n_pages;
 
 static struct yssd_block_dev {
     int yssd_number;
@@ -107,6 +114,94 @@ static int yssd_load_file(void){
     return 0;
 }
 
+static void test_hash(void){
+    struct y_key k1, k2, k3;
+    k1.ino = 2;
+    k1.typ = 'm';
+    strcpy(k1.name, "yssd");
+    k1.len = strlen(k1.name);
+    k2 = k1;
+    k3 = k1;
+    k2.ino = 11;
+    k3.len = 6;
+    pr_info("k1.len: %d\n", k1.len);
+    pr_info("k1[k1.len]==0: %d\n", k1.name[k1.len]==0);
+    pr_info("k1[k1.len-1]: %c\n", k1.name[k1.len-1]);
+    pr_info("k1.hash: %lx\n", y_key_hash(&k1));
+    pr_info("k2.hash: %lx\n", y_key_hash(&k2));
+    pr_info("k3.hash: %lx\n", y_key_hash(&k3));
+    pr_info("after hash: k1.name: %s\n", k1.name);
+}
+
+static void test_dump(void){
+    struct y_key key;
+    struct y_value val;
+    struct vlog_node node;
+    unsigned long p;
+    val.buf = kmalloc(256, GFP_KERNEL);
+    key.ino = 123;
+    key.len = 4;
+    key.typ = 'm';
+    strcpy(key.name, "key1");
+    val.len = 256;
+    memcpy(val.buf, "hello, yssd.", 12);
+    node.key = key;
+    node.v = val;
+
+    p = vlog_dump_size(&key, &val);
+    pr_info("vlog_dump_size: %lu\n", p);
+    p = vlog_node_dump(&node, g_buf);
+    pr_info("vlog_node_dump: %lu\n", p);
+
+    kfree(val.buf);
+}
+
+static void test_kv(void){
+    struct y_key* key;
+    struct y_value* val1, val2;
+    val2.buf = NULL;
+    pr_info("val2.buf=%p\n", val2.buf);
+    key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+    val1 = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+    val1->buf = kmalloc(12, GFP_KERNEL);
+    // val2.buf = kmalloc(12, GFP_KERNEL);
+    val1->len = 12;
+    memcpy(val1->buf, "hello, yssd.", val1->len);
+    key->ino = 123;
+    key->len = 4;
+    key->typ = 'm';
+    strcpy(key->name, "key1");    
+    kv_set(key, val1);
+    kv_get(key, &val2);
+    memcpy(g_buf, val2.buf, 12);
+    g_buf[val2.len]='\0';
+    pr_info("kv_get: v->len=%u, v->buf=%s\n", val2.len, g_buf);
+    kfree(key);
+    kfree(val2.buf);
+    kfree(val1->buf);
+    kfree(val1);
+}
+
+static void test_kv_flush(void){
+    struct y_key* key;
+    struct y_value* val;
+    int i;
+    for(i=0;i<32768;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+}
 
 static void yssd_close_file(void){
     filp_close(fp, NULL);
@@ -211,25 +306,6 @@ static void delete_block_dev(struct yssd_block_dev* dev){
     }
 }
 
-static void test_hash(void){
-    struct y_key k1, k2, k3;
-    k1.ino = 2;
-    k1.typ = 'm';
-    strcpy(k1.name, "yssd");
-    k1.len = strlen(k1.name);
-    k2 = k1;
-    k3 = k1;
-    k2.ino = 11;
-    k3.len = 6;
-    pr_info("k1.len: %d\n", k1.len);
-    pr_info("k1[k1.len]==0: %d\n", k1.name[k1.len]==0);
-    pr_info("k1[k1.len-1]: %c\n", k1.name[k1.len-1]);
-    pr_info("k1.hash: %lx\n", y_key_hash(&k1));
-    pr_info("k2.hash: %lx\n", y_key_hash(&k2));
-    pr_info("k3.hash: %lx\n", y_key_hash(&k3));
-    pr_info("after hash: k1.name: %s\n", k1.name);
-}
-
 static int __init yssd_init(void)
 {
     int res;
@@ -250,13 +326,19 @@ static int __init yssd_init(void)
     }
 
     yssd_load_file();
+    kv_init();
 
     pr_info("YSSD init\n");
 
-    test_y_rbkv_insert();
-    test_y_rbkv_update();
-    test_hash();
+    // test_y_rbkv_insert();
+    // test_y_rbkv_update();
+    // test_hash();
 
+    test_kv();
+    test_dump();
+    test_kv_flush();
+
+    pr_info("YSSD test finished\n");
     return 0;
 }
 
