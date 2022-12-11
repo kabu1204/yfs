@@ -28,12 +28,18 @@ void kv_get(struct y_key* key, struct y_value* val){
     struct y_val_ptr ptr;
     mutex_lock(&glk);
     ptr = lsm_tree_get(&lt, key);
+    if(key->ino==0){
+        pr_info("[kv_get] (page_no, off) = (%u, %u)\n", ptr.page_no, ptr.off);
+    }
     vlog_get(&vlog, key, ptr, val);
     mutex_unlock(&glk);
 }
 
 void kv_set(struct y_key* key, struct y_value* val){
     unsigned long ts = ktime_get_real_fast_ns();
+    if(key->ino==0){
+        pr_info("[kv_set] val=%d\tts=%lu\n", *(int*)(val->buf+12), ts);
+    }
     mutex_lock(&glk);
     if(unlikely(vlog_append(&vlog, key, val, ts)<0)){
         pr_err("kv_set failed\n");

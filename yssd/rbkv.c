@@ -34,6 +34,7 @@ int y_rb_insert(struct rb_root* root, struct y_rb_node* elem)
                 return -1;
             }
             this->kv.ptr = elem->kv.ptr;
+            this->kv.timestamp = elem->kv.timestamp;
             return 0;
         }
 	}

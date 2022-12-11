@@ -37,8 +37,8 @@ void yssd_read_phys_pages(char* buf, unsigned long page_no, unsigned long npages
     size_t sz;
     if(likely(page_no+npages<=n_pages)){
         sz = kernel_read(fp, buf, npages*Y_PAGE_SIZE, &off);
-        if(unlikely(!(sz & (Y_PAGE_SIZE-1)))){
-            pr_warn("kernel_read %ld bytes != PAGE_SIZE\n", sz);
+        if(unlikely(sz & (Y_PAGE_SIZE-1))){
+            pr_warn("kernel_read %ld bytes != N*PAGE_SIZE\n", sz);
         }
         return;
     } else {
@@ -51,8 +51,8 @@ void yssd_write_phys_pages(char* buf, unsigned long page_no, unsigned long npage
     size_t sz;
     if(likely(page_no+npages<=n_pages)){
         sz = kernel_write(fp, buf, npages*Y_PAGE_SIZE, &off);
-        if(unlikely(!(sz & (Y_PAGE_SIZE-1)))){
-            pr_warn("kernel_write %ld bytes != PAGE_SIZE\n", sz);
+        if(unlikely(sz & (Y_PAGE_SIZE-1))){
+            pr_warn("kernel_write %ld bytes != N*PAGE_SIZE\n", sz);
         }
         return;
     } else {

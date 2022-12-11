@@ -14,6 +14,7 @@
 #include "types.h"
 #include "kv.h"
 #include "value_log.h"
+#include "linux/delay.h"
 
 #define YSSD_MAJOR 240
 #define YSSD_DEV_NAME "yssd"
@@ -186,6 +187,28 @@ static void test_kv_flush(void){
     struct y_key* key;
     struct y_value* val;
     int i;
+    for(i=0;i<32768*2;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+}
+
+static void test_kv_flush_get(void){
+    struct y_key* key;
+    struct y_value* val;
+    int i;
+    unsigned long start, end;
     for(i=0;i<32768;++i){
         key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
         val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
@@ -197,6 +220,106 @@ static void test_kv_flush(void){
         val->len = 256;
         memcpy(val->buf, "hello, yssd.", 12);
         kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    start = ktime_get_ns();
+    for(i=0;i<32768;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        kv_get(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    end = ktime_get_ns();
+    pr_info("read time cost: %luns/op\n", (end-start)/32768);
+}
+
+static void test_kv_flush_update(void){
+    struct y_key* key;
+    struct y_value* val;
+    int i, t;
+    for(i=0;i<32768*5;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        *(int*)(val->buf + 12) = i;
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    for(i=0;i<32768;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        kv_get(key, val);
+        t = *(int*)(val->buf + 12);
+        if(t!=(32768*4+i)){
+            pr_info("err %d %d\n", (32768*4+i), t);
+        }
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+}
+
+static void test_kv_gc(void){
+    struct y_key* key;
+    struct y_value* val;
+    int i, t;
+    for(i=0;i<32768*5;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        *(int*)(val->buf + 12) = i;
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    for(i=0;i<32768*5;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        kv_get(key, val);
+        t = *(int*)(val->buf + 12);
+        if(t!=i){
+            pr_info("err %d %d\n", i, t);
+        }
         kfree(key);
         kfree(val->buf);
         kfree(val);
@@ -336,7 +459,9 @@ static int __init yssd_init(void)
 
     test_kv();
     test_dump();
-    test_kv_flush();
+    // test_kv_flush();
+    // test_kv_flush_get();
+    test_kv_gc();
 
     pr_info("YSSD test finished\n");
     return 0;

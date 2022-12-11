@@ -58,7 +58,17 @@ struct value_log {
 
     struct kmem_cache* vl_slab;
     struct kmem_cache* vh_slab;
-}; 
+};
+
+enum gc_stat_item {
+    NR_ROUND,
+    NR_PAGES_COLLECTED,
+    NR_PAGES_FREED,
+    NR_VALID_KV,
+    TIME_PER_GC_NS,
+
+    N_TOTAL_ITEMS
+};
 
 void vlog_init(struct value_log* vlog);
 
@@ -85,5 +95,7 @@ void vlog_flush_sync(struct value_log* vlog);
 void vlog_wakeup_or_block(struct value_log* vlog);
 
 int write_deamon(void* arg);
+
+void init_gc_stat(void);
 
 #endif

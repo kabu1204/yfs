@@ -14,6 +14,7 @@
 static unsigned long counter = 0;
 static unsigned long flush_cnt = 0;
 
+extern unsigned long n_pages;
 
 void vlog_init(struct value_log* vlog){
     vlog->in_mem_size = VLOG_RESET_IN_MEM_SIZE;
@@ -27,9 +28,9 @@ void vlog_init(struct value_log* vlog){
     vlog->write_thread = kthread_create(write_deamon, vlog, "yssd write thread");
     vlog->vl_slab = kmem_cache_create("vlog_list_node_cache", sizeof(struct vlog_list_node), 0, SLAB_HWCACHE_ALIGN, NULL);
     vlog->vh_slab = kmem_cache_create("vlog_hlist_node_cache", sizeof(struct vlog_hlist_node), 0, SLAB_HWCACHE_ALIGN, NULL);
+
+    init_gc_stat();
     pr_info("[vlog]VLOG_FLUSH_SIZE: %lu B\n", Y_VLOG_FLUSH_SIZE);
-    pr_info("[vlog]counter: %lu\n", counter);
-    pr_info("[vlog]counter==0: %d\n", counter==0);
 }
 
 /*
@@ -52,16 +53,12 @@ int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, 
 
     v_entry_size = vlog_dump_size(key, val);
 
-    if(counter==0){
-        pr_info("[vlog]in_mem_size: %lu B", vlog->in_mem_size);
-    }
-
     if((counter % 4096)==0){
         pr_info("[vlog]in_mem_size: %luKB", vlog->in_mem_size/1024);
     }
     if(v_entry_size+vlog->in_mem_size > Y_VLOG_FLUSH_SIZE){
-        vlog_flush_sync(vlog);
-        // vlog_wakeup_or_block(vlog);
+        // vlog_flush_sync(vlog);
+        vlog_wakeup_or_block(vlog);
     }
 
     hash = y_key_hash(key);
@@ -84,6 +81,7 @@ int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, 
 
     /* not exist in hash table */
     cur = kmem_cache_alloc(vlog->vh_slab, GFP_KERNEL);
+    cur->vnode.timestamp = timestamp;
     cur->vnode.key = *key;
     cur->vnode.v.len = val->len;
     cur->vnode.v.buf = kzalloc(val->len, GFP_KERNEL);
@@ -105,6 +103,7 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
     unsigned long hash;
     struct vlog_hlist_node* cur;
     int trial;
+    int npages;
     char *buf;
     hash = y_key_hash(key);
 
@@ -117,7 +116,7 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
         if(y_key_cmp(&cur->vnode.key, key)==0){
             v->len = cur->vnode.v.len;
             if(!v->buf){
-                pr_warn("allocating space for v->buf: %uB\n", v->len);
+                pr_warn("[vlog_get] allocating space for v->buf: %uB\n", v->len);
                 v->buf = kzalloc(v->len, GFP_KERNEL);
             }
             memcpy(v->buf, cur->vnode.v.buf, v->len);
@@ -130,13 +129,14 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
     read_lock(&vlog->inact_lk);
     if(!vlog->inactive){
         read_unlock(&vlog->inact_lk);
-        goto slow;
+        goto retry;
     }
+    pr_info("[vlog_get] search in inact table\n");
     hash_for_each_possible(vlog->inactive->ht, cur, hnode, hash){
         if(y_key_cmp(&cur->vnode.key, key)==0){
             v->len = cur->vnode.v.len;
             if(!v->buf){
-                pr_warn("allocating space for v->buf: %uB\n", v->len);
+                pr_warn("[vlog_get] allocating space for v->buf: %uB\n", v->len);
                 v->buf = kzalloc(v->len, GFP_KERNEL);
             }
             memcpy(v->buf, cur->vnode.v.buf, v->len);
@@ -146,6 +146,7 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
     }
     read_unlock(&vlog->inact_lk);
 
+retry:
     /*
         GET(k, v):
             1. k2v <== lsmtree | k2v.UNFLUSH = true;
@@ -153,6 +154,7 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
             3. write_thread remove value from hashtable
         So we need to re-get from lsmtree.
     */
+    pr_info("[vlog_get] try to sleep and re-get\n");
     trial=3;
     while(trial--){
         msleep(5);
@@ -162,29 +164,32 @@ int vlog_get(struct value_log* vlog, struct y_key* key, struct y_val_ptr ptr, st
         }
     }
     if(ptr.page_no<=OBJECT_VAL_UNFLUSH){
+        pr_info("[vlog_get] re-get failed\n");
         buf = kmalloc(sizeof(struct y_key)+24, GFP_KERNEL);
         sprint_y_key(buf, key);
-        pr_warn("incorrect page_no: %u, key=%s\n", ptr.page_no, buf);
+        pr_warn("[vlog_get] incorrect page_no: %u, key=%s\n", ptr.page_no, buf);
         kfree(buf);
         return -1;
     }
 
 slow:
     read_lock(&vlog->rwlock);
-    if(unlikely(ptr.page_no<=vlog->tail1 || (ptr.page_no >= vlog->tail2 && ptr.page_no<vlog->head))){
+    if(unlikely(ptr.page_no<=vlog->tail1 || (ptr.page_no >= vlog->tail2 && ptr.page_no<vlog->head) || ptr.page_no>=n_pages)){
         read_unlock(&vlog->rwlock);
         buf = kmalloc(sizeof(struct y_key)+24, GFP_KERNEL);
         sprint_y_key(buf, key);
-        pr_warn("incorrect page_no: %u, key=%s\n", ptr.page_no, buf);
+        pr_warn("[vlog_get slow] incorrect page_no: %u, key=%s\n", ptr.page_no, buf);
         kfree(buf);
         return -1;
     }
+    npages = (unlikely(ptr.page_no==vlog->head || ptr.page_no==n_pages-1))?1:2;
     read_unlock(&vlog->rwlock);
-    buf = kzalloc(Y_PAGE_SIZE<<1, GFP_KERNEL);
-    yssd_read_phys_pages(buf, ptr.page_no, 2);
-    if(unlikely(vlog_read_value(buf, key, v)==0)){
+
+    buf = kzalloc(Y_PAGE_SIZE<<(npages-1), GFP_KERNEL);
+    yssd_read_phys_pages(buf, ptr.page_no, npages);
+    if(unlikely(vlog_read_value(buf+ptr.off, key, v)==0)){
         sprint_y_key(buf, key);
-        pr_err("unmatched KV: key=%s\n", buf);
+        pr_err("[vlog_get] unmatched KV: key=%s\n", buf);
         kzfree(buf);
         return -1;
     }
@@ -338,10 +343,9 @@ void vlog_flush(struct value_log* vlog){
     buf = vzalloc(buf_size);
     hash_for_each(vlog->inactive->ht, bkt, vhnode, hnode){
         vhnode->vnode.offset = p;
-        // pr_info("[flush] p=%u\n", p);
         ++flush_cnt;
         if(flush_cnt >= counter) {
-            pr_info("p=%lu\n", p);
+            pr_info("p=%u\n", p);
             pr_info("%lu %lu\n", counter, flush_cnt);
         }
         p += vlog_node_dump(&vhnode->vnode, buf+p);
@@ -358,9 +362,11 @@ void vlog_flush(struct value_log* vlog){
     if(vlog->tail2 - vlog->head>=npages){
         vlog->tail2 -= npages;
         tail = vlog->tail2;
+        pr_info("[flush] tail2 moved from %u to %u\n", tail+npages, tail);
     } else {
         vlog->tail1 -= npages;
         tail = vlog->tail1;
+        pr_info("[flush] tail1 moved from %u to %u\n", tail+npages, tail);
     }
 
     yssd_write_phys_pages(buf, tail+1, npages);
@@ -378,7 +384,7 @@ void vlog_flush(struct value_log* vlog){
         struct vlog_node* vnode = &vhnode->vnode;
         struct y_val_ptr ptr = {
             .page_no = tail + 1 + (vnode->offset >> Y_PAGE_SHIFT),
-            .off = vnode->offset & (Y_PAGE_SHIFT-1),
+            .off = vnode->offset & (Y_PAGE_SIZE-1),
         };
         lsm_tree_get_and_set(lt, &vnode->key, ptr, vnode->timestamp);
         hash_del(&vhnode->hnode);
@@ -420,7 +426,9 @@ int write_deamon(void* arg)
         pr_info("[flush] flush finished\n");
         ++vlog->n_flush;
         if(vlog->n_flush % 5 == 0){
+            pr_info("[GC] GC triggered\n");
             vlog_gc(vlog);
+            pr_info("[GC] finished\n");
         }
         wake_up_interruptible(&vlog->waitq);
     }
