@@ -14,14 +14,6 @@ int y_key_cmp(struct y_key *left, struct y_key *right)
     return (left->typ=='m')?strcmp(left->name, right->name):0;
 }
 
-unsigned int key_dump_size(struct y_k2v* k2v)
-{
-    unsigned int res=25; // typ(1) + ino(4) + timestamp(8) + val_ptr(12)
-    if(k2v->key.typ==Y_KV_META) res += 1 + k2v->key.len;
-    else res += 4;
-    return res;
-}
-
 unsigned long sdbm_hash(const unsigned char *str)
 {
   unsigned long hash = 0;

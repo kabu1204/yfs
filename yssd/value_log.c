@@ -21,6 +21,7 @@ void vlog_init(struct value_log* vlog){
     vlog->active = kvzalloc(sizeof(struct hash_table), GFP_KERNEL);
     vlog->inactive = NULL;
     vlog->n_flush = 0;
+    vlog->catchup = 0;
     init_waitqueue_head(&vlog->waitq);
     rwlock_init(&vlog->rwlock);
     rwlock_init(&vlog->act_lk);
@@ -425,10 +426,13 @@ int write_deamon(void* arg)
         vlog_flush(vlog);
         pr_info("[flush] flush finished\n");
         ++vlog->n_flush;
-        if(vlog->n_flush % 5 == 0){
+        if(vlog->n_flush % VLOG_N_FLUSH_PER_GC == 0){
+            vlog->catchup = 0;
             pr_info("[GC] GC triggered\n");
             vlog_gc(vlog);
             pr_info("[GC] finished\n");
+        } else {
+            gc_early(vlog);
         }
         wake_up_interruptible(&vlog->waitq);
     }

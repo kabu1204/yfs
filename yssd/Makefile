@@ -6,6 +6,7 @@ $(MODULE)-objs := module.o rbkv.o types.o lsmtree.o phys_io.o value_log.o garbag
 PWD := $(CURDIR)
 
 MY_CFLAGS += -g -DDEBUG
+MY_CFLAGS += -msoft-float -msse -msse2 -msse3 -msse4
 ccflags-y += ${MY_CFLAGS}
 CC += ${MY_CFLAGS}
 

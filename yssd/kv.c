@@ -60,3 +60,7 @@ void kv_del(struct y_key* key){
     lsm_tree_del(&lt, key, ts);
     mutex_unlock(&glk);
 }
+
+void mannual_gc(void){
+    vlog_gc(&vlog);
+}

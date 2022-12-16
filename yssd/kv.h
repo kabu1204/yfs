@@ -12,4 +12,6 @@ void kv_get(struct y_key* key, struct y_value* val);
 
 void kv_set(struct y_key* key, struct y_value* val);
 
+void mannual_gc(void);
+
 #endif

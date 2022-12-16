@@ -44,6 +44,8 @@ struct value_log {
     unsigned long inact_size;
 
     unsigned int n_flush;
+    unsigned int catchup;
+
 
     struct task_struct* write_thread;
     wait_queue_head_t waitq;
@@ -97,5 +99,7 @@ void vlog_wakeup_or_block(struct value_log* vlog);
 int write_deamon(void* arg);
 
 void init_gc_stat(void);
+
+void gc_early(struct value_log* vlog);
 
 #endif

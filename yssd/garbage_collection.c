@@ -3,10 +3,11 @@
 #include "types.h"
 #include "value_log.h"
 #include "linux/slab.h"
+#include "asm/fpu/api.h"
 
 extern unsigned long n_pages;
 
-static unsigned long gc_times = 0;
+static unsigned int gc_times = 0;
 static unsigned long gc_stat[N_TOTAL_ITEMS];
 static unsigned long gc_stat_each[N_TOTAL_ITEMS];
 
@@ -45,12 +46,12 @@ inline void dump_gc_stat(void){
 }
 
 inline void dump_gc_stat_each(void){
-    pr_info("[GC] EACH_NR_ROUND:           %lu\n", gc_stat_each[NR_ROUND]);
-    pr_info("[GC] EACH_NR_PAGES_COLLECTED: %lu\n", gc_stat_each[NR_PAGES_COLLECTED]);
-    pr_info("[GC] EACH_NR_PAGES_FREED:     %lu\n", gc_stat_each[NR_PAGES_FREED]);
-    pr_info("[GC] EACH_NR_VALID_KV:        %lu\n", gc_stat_each[NR_VALID_KV]);
-    pr_info("[GC] EACH_TIME_PER_GC_NS:     %lu\n", gc_stat_each[TIME_PER_GC_NS]);
-    pr_info("[GC] EACH_TIME_PER_GC_MS:     %lu\n", gc_stat_each[TIME_PER_GC_NS]/1000000);
+    pr_info("[GC %u] EACH_NR_ROUND:           %lu\n", gc_times, gc_stat_each[NR_ROUND]);
+    pr_info("[GC %u] EACH_NR_PAGES_COLLECTED: %lu\n", gc_times, gc_stat_each[NR_PAGES_COLLECTED]);
+    pr_info("[GC %u] EACH_NR_PAGES_FREED:     %lu\n", gc_times, gc_stat_each[NR_PAGES_FREED]);
+    pr_info("[GC %u] EACH_NR_VALID_KV:        %lu\n", gc_times, gc_stat_each[NR_VALID_KV]);
+    pr_info("[GC %u] EACH_TIME_PER_GC_NS:     %lu\n", gc_times, gc_stat_each[TIME_PER_GC_NS]);
+    pr_info("[GC %u] EACH_TIME_PER_GC_MS:     %lu\n", gc_times, gc_stat_each[TIME_PER_GC_NS]/1000000);
 }
 
 void vlog_flush_gc(struct value_log* vlog, struct list_head* vlnodes, char *buf){
@@ -141,7 +142,7 @@ void vlog_gc(struct value_log* vlog){
     total_pages = head - vlog->tail1;
     total_pages = total_pages>=VLOG_GC_PAGES ? VLOG_GC_PAGES : total_pages;
 
-    pr_info("[GC] total_pages = %u\n", total_pages);
+    pr_info("[GC %u] total_pages = %u\n", gc_times, total_pages);
 
     buf = vzalloc(Y_VLOG_FLUSH_SIZE);
     yssd_read_phys_page(buf, head);
@@ -154,18 +155,18 @@ void vlog_gc(struct value_log* vlog){
         nbytes = npages << Y_PAGE_SHIFT;
         p = 0;
         ++round;
-        pr_info("[GC Round %lu] npages = %u nbytes = %u\n", round, npages, nbytes);
+        pr_info("[GC %u Round %lu] npages = %u nbytes = %u\n", gc_times, round, npages, nbytes);
         yssd_read_phys_pages(buf, head+1, npages);
         while(p+VLOG_RESET_IN_MEM_SIZE<nbytes){
             int n;
             vlnode = kmem_cache_alloc(vl_slab, GFP_KERNEL);
             if(!vlnode){
-                pr_err("[GC] slab alloc failed\n");
+                pr_err("[GC %u] slab alloc failed\n", gc_times);
             }
 
             n = vlog_node_load(buf+p, &vlnode->vnode);
             if(unlikely(n==0)){
-                pr_info("[GC] load end\n");
+                pr_info("[GC %u] load end\n", gc_times);
                 kmem_cache_free(vl_slab, vlnode);
                 break;
             }
@@ -204,10 +205,11 @@ void vlog_gc(struct value_log* vlog){
     if(head==vlog->tail1){
         vlog->tail1 = vlog->tail2;
         vlog->head = vlog->tail2 = n_pages-1;
-        pr_info("[GC] head catches up with tail1 at %u, reset\n", head);
+        vlog->catchup = 1;
+        pr_info("[GC %u] head catches up with tail1 at %u, reset\n", gc_times, head);
     } else {
+        pr_info("[GC %u] head moved from %u to %u\n", gc_times, vlog->head, head);
         vlog->head = head;
-        pr_info("[GC] head moved to %u\n", head);
     }
     write_unlock(&vlog->rwlock);
 
@@ -215,4 +217,42 @@ void vlog_gc(struct value_log* vlog){
     inc_gc_stat_item(end_time - start_time, TIME_PER_GC_NS);
     acc_gc_stat();
     dump_gc_stat_each();
+    ++gc_times;
+}
+
+void gc_early(struct value_log* vlog){
+    unsigned int avg_freed;
+    unsigned int avg_collect;
+    unsigned int est_next_freed;
+    unsigned int est_next_collect;
+    unsigned int space;
+
+    if(unlikely(!gc_times)){
+        return;
+    }
+
+    if(vlog->catchup){
+        return;
+    }
+
+    space = vlog->tail2 - vlog->head;
+
+    avg_freed = gc_stat[NR_PAGES_FREED]/gc_times;
+    avg_collect = gc_stat[NR_PAGES_COLLECTED]/gc_times;
+    est_next_collect = ((vlog->head-vlog->tail1)>VLOG_GC_PAGES)?(VLOG_GC_PAGES):(vlog->head-vlog->tail1);
+    kernel_fpu_begin();
+    est_next_freed = (unsigned int)((float)est_next_collect*((float)avg_freed/avg_collect));
+    kernel_fpu_end();
+
+    pr_info("[GC early] space:       %u\n", space);
+    pr_info("[GC early] avg_collect: %u\n", avg_collect);
+    pr_info("[GC early] avg_freed:   %u\n", avg_freed);
+    pr_info("[GC early] est_collect: %u\n", est_next_collect);
+    pr_info("[GC early] est_freed:   %u\n", est_next_freed);
+
+    if(est_next_freed<space && (space-est_next_freed<=(Y_VLOG_FLUSH_SIZE>>(Y_PAGE_SHIFT)))){
+        pr_info("[GC early] start early gc\n");
+        vlog_gc(vlog);
+        pr_info("[GC early] end early gc\n");
+    }
 }

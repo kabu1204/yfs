@@ -58,7 +58,7 @@ struct y_key {
     */
     unsigned int len;
     char typ;
-    char name[250];
+    char name[234];
 };
 
 struct y_value {
@@ -100,7 +100,6 @@ struct y_io_req {
 #define sprint_y_key(buf, key) {snprintf(buf, sizeof(struct y_key)+24, "%c:%u%s%s", (key)->typ, (key)->ino, ((key)->name[0]!='\0'?":":""), (key)->name);}
 
 int y_key_cmp(struct y_key *left, struct y_key *right);
-unsigned int key_dump_size(struct y_k2v* kv);
 unsigned long sdbm_hash(const unsigned char *str);
 unsigned long y_key_hash(struct y_key* key);
 

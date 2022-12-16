@@ -326,6 +326,47 @@ static void test_kv_gc(void){
     }
 }
 
+static void test_kv_gc_reset(void){
+    struct y_key* key;
+    struct y_value* val;
+    int i, t;
+    for(i=0;i<32768*10;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i%32768;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        *(int*)(val->buf + 12) = i;
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    for(i=0;i<32768;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 4;
+        key->typ = 'm';
+        strcpy(key->name, "key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        kv_get(key, val);
+        t = *(int*)(val->buf + 12);
+        if(t!=(32768*9+i)){
+            pr_info("err %d %d\n", (32768*9+i), t);
+        }
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+}
+
 static void yssd_close_file(void){
     filp_close(fp, NULL);
 }
@@ -457,11 +498,12 @@ static int __init yssd_init(void)
     // test_y_rbkv_update();
     // test_hash();
 
-    test_kv();
-    test_dump();
+    // test_kv();
+    // test_dump();
     // test_kv_flush();
     // test_kv_flush_get();
-    test_kv_gc();
+    // test_kv_gc();
+    test_kv_gc_reset();
 
     pr_info("YSSD test finished\n");
     return 0;
