@@ -64,7 +64,7 @@ int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, 
 
     hash = y_key_hash(key);
 
-    read_lock(&vlog->act_lk);
+    write_lock(&vlog->act_lk);
     hash_for_each_possible(vlog->active->ht, cur, hnode, hash){
         if(y_key_cmp(&cur->vnode.key, key)==0){
             if(unlikely(timestamp < cur->vnode.timestamp)){
@@ -74,11 +74,11 @@ int vlog_append(struct value_log* vlog, struct y_key* key, struct y_value* val, 
             cur->vnode.timestamp = timestamp;
             vlog->in_mem_size += val->len - cur->vnode.v.len;
             valcpy(&cur->vnode.v, val);
-            read_unlock(&vlog->act_lk);
+            write_unlock(&vlog->act_lk);
             goto out;
         }
     }
-    read_unlock(&vlog->act_lk);
+    write_unlock(&vlog->act_lk);
 
     /* not exist in hash table */
     cur = kmem_cache_alloc(vlog->vh_slab, GFP_KERNEL);

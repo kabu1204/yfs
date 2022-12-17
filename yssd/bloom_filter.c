@@ -3,13 +3,12 @@
 #include "types.h"
 
 struct bloom_filter* bloom_alloc(void){
-    struct bloom_filter* bf = kmalloc(sizeof(struct bloom_filter), GFP_KERNEL);
-    memset(bf, 0, sizeof(struct bloom_filter));
+    struct bloom_filter* bf = kzalloc(sizeof(struct bloom_filter), GFP_KERNEL);
     return bf;
 }
 
-void bloom_add(struct bloom_filter* bf, const char* key){
-    unsigned long hash = sdbm_hash(key);
+void bloom_add(struct bloom_filter* bf, struct y_key* key){
+    unsigned long hash = y_key_hash(key);
     unsigned long delta;
     int i;
     unsigned long bit;
@@ -22,8 +21,8 @@ void bloom_add(struct bloom_filter* bf, const char* key){
     }
 }
 
-int bloom_contains(struct bloom_filter* bf, const char* key){
-    unsigned long hash = sdbm_hash(key);
+int bloom_contains(struct bloom_filter* bf, struct y_key* key){
+    unsigned long hash = y_key_hash(key);
     unsigned long delta;
     int i;
     unsigned long bit;

@@ -1,15 +1,20 @@
+#include "bloom_filter.h"
 #include "rbkv.h"
 #include "types.h"
 #include "lsmtree.h"
 #include "linux/slab.h"
 #include "value_log.h"
+#include <linux/mm.h>
 
 void lsm_tree_init(struct lsm_tree* lt){
     lt->mem_table = kzalloc(sizeof(struct rb_root), GFP_KERNEL);
     lt->imm_table = NULL;
+    lt->mem_bf = bloom_alloc();
+    lt->imm_bf = NULL;
     lt->n_flush = 0;
     lt->max_k2v_size = 0;
     lt->mem_size = LSM_TREE_RESET_IN_MEM_SIZE;
+    lt->comp_buf = kvmalloc(Y_TABLE_SIZE, GFP_KERNEL);
     lt->rb_node_slab = kmem_cache_create("yssd_lsm_tree_rb_node", sizeof(struct y_rb_node), 0, SLAB_HWCACHE_ALIGN, NULL);
     rwlock_init(&lt->lk);
 }
@@ -39,8 +44,12 @@ void lsm_tree_set(struct lsm_tree* lt, struct y_key* key, struct y_val_ptr ptr, 
         pr_err("[lsmtree] k2v exceeds size limit(%u)", LSM_TREE_MAX_K2V_SIZE);
         return;
     }
-    
+
     write_lock(&lt->lk);
+    if(unlikely(exceed_table_size(lt->mem_size, k2v_size, lt->max_k2v_size))){
+        wakeup_compact(lt);
+    }
+    
     node = kmem_cache_alloc(lt->rb_node_slab, GFP_KERNEL);
     node->kv.key = *key;
     node->kv.ptr = ptr;
@@ -52,7 +61,6 @@ void lsm_tree_set(struct lsm_tree* lt, struct y_key* key, struct y_val_ptr ptr, 
     if(res==0){
         kmem_cache_free(lt->rb_node_slab, node);
     }
-    
     lt->max_k2v_size = max(k2v_size, lt->max_k2v_size);
 
     write_unlock(&lt->lk);
@@ -60,22 +68,29 @@ void lsm_tree_set(struct lsm_tree* lt, struct y_key* key, struct y_val_ptr ptr, 
 
 int lsm_tree_get_and_set(struct lsm_tree* lt, struct y_key* key, struct y_val_ptr ptr, unsigned long timestamp){
     struct y_rb_node* node;
+    unsigned int k2v_size;
     int res;
+    k2v_size = lsm_k2v_size(key);
+    if(unlikely(k2v_size>LSM_TREE_MAX_K2V_SIZE)){
+        pr_err("[lsmtree] k2v exceeds size limit(%u)", LSM_TREE_MAX_K2V_SIZE);
+        return -1;
+    }
+
     write_lock(&lt->lk);
+    if(unlikely(exceed_table_size(lt->mem_size, k2v_size, lt->max_k2v_size))){
+        wakeup_compact(lt);
+    }
+
     node = y_rb_find(lt->mem_table, key);
     if(likely(node)){
         if(node->kv.timestamp > timestamp){
-            // pr_info("[lsmtree] found newer record\n");
+            pr_info("[lsmtree] found newer record\n");
             write_unlock(&lt->lk);
             return 0;
         }
     } else {
         pr_info("[lsmtree] search in disk\n");
         // TODO: search in disk
-    }
-    if(key->ino==0){
-        pr_info("[lsmtree_get_and_set] ts1=%lu ts2=%lu\n", node->kv.timestamp, timestamp);
-        pr_info("[lsmtree_get_and_set] ptr1=(%u, %u) ptr2=(%u, %u)\n", node->kv.ptr.page_no, node->kv.ptr.off, ptr.page_no, ptr.off);
     }
     node = kmem_cache_alloc(lt->rb_node_slab, GFP_KERNEL);
     node->kv.key = *key;
@@ -88,6 +103,7 @@ int lsm_tree_get_and_set(struct lsm_tree* lt, struct y_key* key, struct y_val_pt
     if(res==0){
         kmem_cache_free(lt->rb_node_slab, node);
     }
+    lt->max_k2v_size = max(k2v_size, lt->max_k2v_size);
     write_unlock(&lt->lk);
     return 1;
 }
@@ -100,6 +116,9 @@ void lsm_tree_del(struct lsm_tree* lt, struct y_key* key, unsigned long timestam
     if(unlikely(k2v_size>LSM_TREE_MAX_K2V_SIZE)){
         pr_err("[lsmtree] k2v exceeds size limit(%u)", LSM_TREE_MAX_K2V_SIZE);
         return;
+    }
+    if(unlikely(exceed_table_size(lt->mem_size, k2v_size, lt->max_k2v_size))){
+        wakeup_compact(lt);
     }
 
     write_lock(&lt->lk);

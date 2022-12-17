@@ -67,7 +67,7 @@ yssd is responsible for indexing KV objects and transaction management.
 
 ---
 
-How space freed by GC is used?
+How space freed by GC is reused?
 
 vlog maintains two queues: queue1(from `head` to `tail1`) and queue2(from `end` to `tail2`).
 

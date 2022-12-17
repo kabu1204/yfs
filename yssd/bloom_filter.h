@@ -7,14 +7,16 @@
 #define Y_BLOOM_M Y_BLOOM_F*Y_BLOOM_N
 #define Y_BLOOM_SIZE_BYTES Y_BLOOM_M >> 3
 
+#include "types.h"
+
 struct bloom_filter{
     char array[Y_BLOOM_SIZE_BYTES];
 };
 
 struct bloom_filter* bloom_alloc(void);
 
-void bloom_add(struct bloom_filter* bf, const char* key);
+void bloom_add(struct bloom_filter* bf, struct y_key* key);
 
-int bloom_contains(struct bloom_filter* bf, const char* key);
+int bloom_contains(struct bloom_filter* bf, struct y_key* key);
 
 #endif

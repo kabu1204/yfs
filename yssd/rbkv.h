@@ -7,6 +7,7 @@
 struct y_rb_node {
     struct rb_node node;
     struct y_k2v kv;
+    struct y_rb_node* nxt;  // for 
 };
 
 struct y_rb_node* y_rb_find(struct rb_root* root, struct y_key* key);
