@@ -10,7 +10,7 @@
 #define LSM_TREE_RESET_IN_MEM_SIZE 0
 
 struct lsm_tree {
-    unsigned int last_k2v_page_no;
+    unsigned int head;
     unsigned int mem_size;
     unsigned int imm_size;
     unsigned int n_flush;
@@ -18,7 +18,7 @@ struct lsm_tree {
 
     struct rb_root* mem_table;
     struct rb_root* imm_table;
-    rwlock_t lk;
+    rwlock_t ext_lk, mem_lk, imm_lk;
 
     struct task_struct* compact_thread;
     wait_queue_head_t waitq;
@@ -31,7 +31,7 @@ struct lsm_tree {
     The maximum padding space for each block is (max_k2v_size-1).
     The worst case is each datablock will waste (max_k2v_size-1) bytes for padding.
 */
-#define exceed_table_size(memsize, new_k2v_size, max_k2v_size) (memsize+new_k2v_size+(max(new_k2v_size, max_k2v_size)-1)*Y_DATA_BLOCK_PER_TABLE>Y_TABLE_SIZE)
+#define exceed_table_size(memsize, new_k2v_size, max_k2v_size) (memsize+new_k2v_size+(max(new_k2v_size, max_k2v_size)-1)*Y_DATA_BLOCK_PER_TABLE>Y_TABLE_DATA_SIZE)
 
 void lsm_tree_init(struct lsm_tree* lt);
 

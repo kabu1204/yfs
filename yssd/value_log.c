@@ -158,11 +158,14 @@ retry:
     pr_info("[vlog_get] try to sleep and re-get\n");
     trial=3;
     while(trial--){
-        msleep(5);
         ptr = lsm_tree_get(vlog->lt, key);
         if(ptr.page_no > OBJECT_VAL_UNFLUSH){
             break;
         }
+        msleep(5);
+    }
+    if(unlikely(trial<2)){
+        pr_warn("[flush] trial<2\n");
     }
     if(ptr.page_no<=OBJECT_VAL_UNFLUSH){
         pr_info("[vlog_get] re-get failed\n");
@@ -186,6 +189,13 @@ slow:
     npages = (unlikely(ptr.page_no==vlog->head || ptr.page_no==n_pages-1))?1:2;
     read_unlock(&vlog->rwlock);
 
+    /*
+        Here we read from disk without a lock, WHY?
+        Because the vlog_get() is holding rwlock, 
+        only vlog_append() can trigger flush to overwrite 
+        the disk content. There's no way the page can be 
+        overwritten when vlog_get() tries to reads from disk.
+    */
     buf = kzalloc(Y_PAGE_SIZE<<(npages-1), GFP_KERNEL);
     yssd_read_phys_pages(buf, ptr.page_no, npages);
     if(unlikely(vlog_read_value(buf+ptr.off, key, v)==0)){
@@ -332,6 +342,7 @@ void vlog_flush(struct value_log* vlog){
     struct hlist_node* tmp;
     struct hash_table* inact;
 
+    inact = vlog->inactive;
     lt = vlog->lt;
     buf_size = vlog->inact_size;
     buf_size = align_backward(buf_size, Y_PAGE_SHIFT);
@@ -342,7 +353,7 @@ void vlog_flush(struct value_log* vlog){
     pr_info("[flush] npages   = %u\n", npages);
 
     buf = vzalloc(buf_size);
-    hash_for_each(vlog->inactive->ht, bkt, vhnode, hnode){
+    hash_for_each(inact->ht, bkt, vhnode, hnode){
         vhnode->vnode.offset = p;
         ++flush_cnt;
         if(flush_cnt >= counter) {
@@ -377,10 +388,6 @@ void vlog_flush(struct value_log* vlog){
     pr_info("[flush] write to physical pages finished\n");
 
     write_lock(&vlog->inact_lk);
-    inact = vlog->inactive;
-    vlog->inactive = NULL;
-    write_unlock(&vlog->inact_lk);
-
     hash_for_each_safe(inact->ht, bkt, tmp, vhnode, hnode){
         struct vlog_node* vnode = &vhnode->vnode;
         struct y_val_ptr ptr = {
@@ -388,12 +395,14 @@ void vlog_flush(struct value_log* vlog){
             .off = vnode->offset & (Y_PAGE_SIZE-1),
         };
         lsm_tree_get_and_set(lt, &vnode->key, ptr, vnode->timestamp);
-        hash_del(&vhnode->hnode);
+        // hash_del(&vhnode->hnode);
 
         kzfree(vnode->v.buf);
         kmem_cache_free(vlog->vh_slab, vhnode);
     }
+    vlog->inactive = NULL;
     kvfree(inact);
+    write_unlock(&vlog->inact_lk);
     pr_info("[flush] free inactive hashtable finished\n");
 }
 

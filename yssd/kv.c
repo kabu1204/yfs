@@ -18,10 +18,11 @@ void kv_init(){
     vlog_init(&vlog);
     mutex_init(&glk);
 
-    lt.last_k2v_page_no = OBJECT_VAL_UNFLUSH;
+    lt.head = Y_RESERVED_PAGES;
     vlog.lt = &lt;
     vlog.head = vlog.tail1 = vlog.tail2 = n_pages-1;
     wake_up_process(vlog.write_thread);
+    wake_up_process(lt.compact_thread);
 }
 
 void kv_get(struct y_key* key, struct y_value* val){

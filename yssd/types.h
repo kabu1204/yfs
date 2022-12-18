@@ -12,12 +12,13 @@
 
 #define Y_PAGE_SHIFT PAGE_SHIFT
 #define Y_PAGE_SIZE  PAGE_SIZE          // 4KB minimum r/w unit
-#define Y_BLOCK_SIZE (Y_PAGE_SIZE<<3)   // 64KB
+#define Y_BLOCK_SIZE (Y_PAGE_SIZE<<4)   // 64KB
 #define Y_NR_BLOCK_PER_TABLE 32         // 1 metablock + 31 datablock
-#define Y_DATA_BLOCK_PER_TABLE Y_NR_BLOCK_PER_TABLE-1
-#define Y_META_BLOCK_HEADER_SIZE (0b11<<10) // 1.5KB
+#define Y_DATA_BLOCK_PER_TABLE (Y_NR_BLOCK_PER_TABLE-1)
+#define Y_META_BLOCK_HEADER_SIZE (0b11<<9) // 1.5KB
 #define Y_TABLE_SIZE (Y_BLOCK_SIZE*Y_NR_BLOCK_PER_TABLE)  // 2MB
-#define Y_VLOG_FLUSH_SIZE  1ul<<23      // 8MB
+#define Y_TABLE_DATA_SIZE  (Y_BLOCK_SIZE*Y_DATA_BLOCK_PER_TABLE)    // 31*64KB
+#define Y_VLOG_FLUSH_SIZE  (1ul<<23)      // 8MB
 #define SMALL_OBJECT_SIZE  Y_PAGE_SIZE
 
 #define Y_KV_SUPERBLOCK ('s')
@@ -33,6 +34,7 @@
 #define OBJECT_SMALL_FILE  0
 #define OBJECT_DEL         1
 #define OBJECT_VAL_UNFLUSH 2
+#define Y_RESERVED_PAGES  OBJECT_VAL_UNFLUSH+1
 
 enum y_io_req_type{
     GET,        // GET
