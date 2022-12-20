@@ -10,6 +10,7 @@
 #include <linux/hdreg.h>
 #include <linux/rbtree.h>
 #include <linux/random.h>
+#include "mem_index.h"
 #include "rbkv.h"
 #include "types.h"
 #include "kv.h"
@@ -408,6 +409,44 @@ static void test_kv_lsm_flush(void){
     // }
 }
 
+void test_rb_index_lower_bound(void){
+    struct rb_root root = RB_ROOT;
+    struct rb_node *cur;
+    struct y_rb_index* rbi;
+    struct y_key key;
+    int i;
+    int idx[10] = {0, 6, 4, 7, 5, 9, 4, 3, 4, 10};
+    for(i=0;i<10;++i){
+        rbi = kzalloc(sizeof(struct y_rb_index), GFP_KERNEL);
+        rbi->start.ino = idx[i];
+        rbi->blk.table_no = 0;
+        rbi->blk.block_no = i;
+        y_rbi_insert(&root, rbi);
+    }
+    for(cur=rb_first(&root); cur; cur=rb_next(cur)){
+        rbi = rb_entry(cur, struct y_rb_index, node);
+        pr_info("ino=%u blk=%u\n", rbi->start.ino, rbi->blk.block_no);
+    }
+    memset(&key, 0, sizeof(key));
+    for(i=0;i<=10;++i){
+        key.ino = i;
+        rbi = y_rbi_lower_bound(&root, &key);
+        if(rbi!=NULL){
+            pr_info("lower_bound of %u: (%u, %u)\n", key.ino, rbi->start.ino, rbi->blk.block_no);
+        }
+        if(i==4){
+            for(cur = &rbi->node; cur; cur=rb_next(cur)){
+                rbi = rb_entry(cur, struct y_rb_index, node);
+                pr_info("ino=%u blk=%u\n", rbi->start.ino, rbi->blk.block_no);
+            }
+        }
+        rbi = y_rbi_upper_bound(&root, &key);
+        if(rbi!=NULL){
+            pr_info("upper_bound of %u: (%u, %u)\n", key.ino, rbi->start.ino, rbi->blk.block_no);
+        }
+    }
+}
+
 static void yssd_close_file(void){
     filp_close(fp, NULL);
 }
@@ -545,7 +584,8 @@ static int __init yssd_init(void)
     // test_kv_flush_get();
     // test_kv_gc();
     // test_kv_gc_reset();
-    test_kv_lsm_flush();
+    // test_kv_lsm_flush();
+    test_rb_index_lower_bound();
 
     pr_info("YSSD test finished\n");
     return 0;

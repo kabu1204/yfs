@@ -4,6 +4,7 @@
 #include "rbkv.h"
 #include "types.h"
 #include <linux/slab.h>
+#include "mem_index.h"
 #include <linux/rbtree.h>
 
 void memtable_flush(struct lsm_tree* lt){
@@ -17,6 +18,7 @@ void memtable_flush(struct lsm_tree* lt){
     unsigned long metap;
     struct bloom_filter* bfs[Y_DATA_BLOCK_PER_TABLE];
     struct y_rb_node* rbnode;
+    struct y_rb_index* indices[Y_DATA_BLOCK_PER_TABLE];
     struct rb_node* cur, *prev;
     struct y_k2v* k2v;
 
@@ -25,32 +27,37 @@ void memtable_flush(struct lsm_tree* lt){
     i_block = 0;
     basep = Y_BLOCK_SIZE;
     off = 0;
-    start = 1;
+    start = 0;
     buf = lt->comp_buf;
     bfs[0] = bloom_alloc();
+    indices[0] = kzalloc(sizeof(struct y_rb_index), GFP_KERNEL);
 
     read_lock(&lt->imm_lk);
 
     cur = rb_first(lt->imm_table);
     k2v = &rb_entry(cur, struct y_rb_node, node)->kv;
+    bloom_add(bfs[0], &k2v->key);
+    indices[0]->start = k2v->key;
     prev_size = k2v_size = dump_k2v(buf+metap, &k2v->key, k2v->ptr, k2v->timestamp);
     memcpy(buf+basep, buf+metap, k2v_size);
     memcpy(buf, buf+metap, k2v_size);   // table start_key
     metap += LSM_TREE_MAX_K2V_SIZE;
-    prev = cur;
 
-    for(; cur; prev=cur, cur = rb_next(cur)){
+    for(prev=cur, cur = rb_next(cur); cur; prev=cur, cur = rb_next(cur)){
         rbnode = rb_entry(cur, struct y_rb_node, node);
         k2v = &rbnode->kv;
         rb_entry(prev, struct y_rb_node, node)->nxt = rbnode;
         k2v_size = lsm_k2v_size(&k2v->key);
         if(unlikely(off + k2v_size > Y_BLOCK_SIZE)){
             memcpy(buf+metap, buf+basep+off-prev_size, prev_size);  // dump end_key of i_block
-            metap += LSM_TREE_MAX_K2V_SIZE;
-            off = 0;
+            indices[i_block]->end = rb_entry(prev, struct y_rb_node, node)->kv.key;
             bfs[++i_block] = bloom_alloc();
+            indices[i_block] = kzalloc(sizeof(struct y_rb_index), GFP_KERNEL);
+            indices[i_block]->start = k2v->key;
+            metap += LSM_TREE_MAX_K2V_SIZE;
             basep += Y_BLOCK_SIZE;
             start = 1;
+            off = 0;
         }
         bloom_add(bfs[i_block], &k2v->key);
         if(unlikely(k2v_size != dump_k2v(buf+basep+off, &k2v->key, k2v->ptr, k2v->timestamp))) {
@@ -74,6 +81,8 @@ void memtable_flush(struct lsm_tree* lt){
     for(i=0;i<=i_block;++i){
         memcpy(buf+metap, bfs[i], sizeof(struct bloom_filter));
         metap += sizeof(struct bloom_filter);
+        indices[i]->blk.table_no = lt->n_tables;
+        indices[i]->blk.block_no = i;
     }
 
     pr_info("[compact] dump bloom filters finished, metap = %luKB\n", metap>>10);
@@ -83,6 +92,11 @@ void memtable_flush(struct lsm_tree* lt){
     pr_info("[compact] head moved from %u to %u\n", lt->head, lt->head + (Y_TABLE_SIZE>>Y_PAGE_SHIFT));
     lt->head += Y_TABLE_SIZE>>Y_PAGE_SHIFT;
 
+    write_lock(&lt->index_lk);
+    for(i=0;i<=i_block;++i){
+        y_rbi_insert(lt->mem_index, indices[i]);
+    }
+    write_unlock(&lt->index_lk);
 
     write_lock(&lt->imm_lk);
     for(rbnode=rb_entry(rb_first(lt->imm_table), struct y_rb_node, node); rbnode; rbnode=rbnode->nxt){
@@ -134,11 +148,12 @@ int compact_deamon(void* arg){
 
 inline unsigned int lsm_k2v_size(struct y_key* key)
 {
-    return 21+((key->typ==Y_KV_META)?(1+key->len):4);
+    return 22+((key->typ==Y_KV_META)?(1+key->len):4);
 }
 
 inline unsigned int dump_k2v(char* buf, struct y_key* key, struct y_val_ptr ptr, unsigned long timestamp){
-    unsigned int p=0;
+    unsigned int p=1;
+    buf[0] = '#';
     buf[p++] = key->typ;
     *(unsigned int*)(buf + p) = key->ino;
     p += 4;
@@ -154,6 +169,32 @@ inline unsigned int dump_k2v(char* buf, struct y_key* key, struct y_val_ptr ptr,
     *(unsigned long*)(buf + p) = timestamp;
     p += 8;
     *(struct y_val_ptr*)(buf + p) = ptr;
+    p += sizeof(struct y_val_ptr);
+    return p;
+}
+
+inline unsigned int read_k2v(char *buf, struct y_k2v* k2v){
+    unsigned int p=1;
+    buf[0] = '#';
+    if(unlikely(buf[0]!='#')){
+        pr_err("[read_k2v] format err\n");
+        return 0;
+    }
+    k2v->key.typ = buf[p++];
+    k2v->key.ino = *(unsigned int*)(buf + p);
+    p += 4;
+    if(k2v->key.typ==Y_KV_META){
+        k2v->key.len = *(char*)(buf + p);
+        ++p;
+        memcpy(k2v->key.name, buf + p, k2v->key.len);
+        p += k2v->key.len;
+    } else {
+        k2v->key.len = *(unsigned int*)(buf + p);
+        p += 4;
+    }
+    k2v->timestamp = *(unsigned long*)(buf + p);
+    p += 8;
+    k2v->ptr = *(struct y_val_ptr*)(buf + p);
     p += sizeof(struct y_val_ptr);
     return p;
 }

@@ -11,7 +11,9 @@ unsigned int counter=0;
 
 void lsm_tree_init(struct lsm_tree* lt){
     lt->mem_table = kzalloc(sizeof(struct rb_root), GFP_KERNEL);
+    lt->mem_index = kzalloc(sizeof(struct rb_root), GFP_KERNEL);
     lt->imm_table = NULL;
+    lt->n_tables = 0;
     lt->n_flush = 0;
     lt->max_k2v_size = 0;
     lt->mem_size = LSM_TREE_RESET_IN_MEM_SIZE;
@@ -22,6 +24,7 @@ void lsm_tree_init(struct lsm_tree* lt){
     rwlock_init(&lt->mem_lk);
     rwlock_init(&lt->imm_lk);
     rwlock_init(&lt->ext_lk);
+    rwlock_init(&lt->index_lk);
 
     pr_info("[lsmtree] Y_BLOCK_SIZE: %luB(%luKB)\n", Y_BLOCK_SIZE, Y_BLOCK_SIZE>>10);
     pr_info("[lsmtree] Y_TABLE_SIZE: %luB(%luKB)\n", Y_TABLE_SIZE, Y_TABLE_SIZE>>10);

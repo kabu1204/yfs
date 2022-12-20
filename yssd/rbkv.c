@@ -23,13 +23,13 @@ int y_rb_insert(struct rb_root* root, struct y_rb_node* elem)
     int res;
     struct y_rb_node *this;
     struct rb_node **new = &(root->rb_node), *parent = NULL;
-	while (*new) {
-		this = container_of(*new, struct y_rb_node, node);
-		res = y_key_cmp(&elem->kv.key, &this->kv.key);
+    while (*new) {
+        this = container_of(*new, struct y_rb_node, node);
+        res = y_key_cmp(&elem->kv.key, &this->kv.key);
         parent = *new;
-		if(res < 0) new = &((*new)->rb_left);
-		else if(res > 0) new = &((*new)->rb_right);
-		else {
+        if(res < 0) new = &((*new)->rb_left);
+        else if(res > 0) new = &((*new)->rb_right);
+        else {
             if(unlikely(elem->kv.timestamp < this->kv.timestamp)){
                 return -1;
             }
@@ -37,10 +37,10 @@ int y_rb_insert(struct rb_root* root, struct y_rb_node* elem)
             this->kv.timestamp = elem->kv.timestamp;
             return 0;
         }
-	}
-	rb_link_node(&elem->node, parent, new);
-	rb_insert_color(&elem->node, root);
-	return 1;
+    }
+    rb_link_node(&elem->node, parent, new);
+    rb_insert_color(&elem->node, root);
+    return 1;
 }
 
 void test_y_rbkv_insert(void){

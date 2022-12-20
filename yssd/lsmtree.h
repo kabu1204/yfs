@@ -11,6 +11,7 @@
 
 struct lsm_tree {
     unsigned int head;
+    unsigned int n_tables;
     unsigned int mem_size;
     unsigned int imm_size;
     unsigned int n_flush;
@@ -18,7 +19,9 @@ struct lsm_tree {
 
     struct rb_root* mem_table;
     struct rb_root* imm_table;
-    rwlock_t ext_lk, mem_lk, imm_lk;
+    struct rb_root* mem_index;
+
+    rwlock_t ext_lk, mem_lk, imm_lk, index_lk;
 
     struct task_struct* compact_thread;
     wait_queue_head_t waitq;
@@ -65,5 +68,7 @@ void compact(struct lsm_tree* lt);
 int compact_deamon(void* arg);
 
 unsigned int dump_k2v(char* buf, struct y_key* key, struct y_val_ptr ptr, unsigned long timestamp);
+
+unsigned int read_k2v(char *buf, struct y_k2v* k2v);
 
 #endif

@@ -1,7 +1,7 @@
 MODULE = yssd
 
 obj-m += yssd.o
-$(MODULE)-objs := module.o rbkv.o types.o lsmtree.o phys_io.o value_log.o garbage_collection.o kv.o compaction.o bloom_filter.o
+$(MODULE)-objs := module.o rbkv.o types.o lsmtree.o phys_io.o value_log.o garbage_collection.o kv.o compaction.o bloom_filter.o mem_index.o
 
 PWD := $(CURDIR)
 

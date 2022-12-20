@@ -6,12 +6,12 @@
   0: left == right
   1: left > right
 */
-int y_key_cmp(struct y_key *left, struct y_key *right)
+inline int y_key_cmp(struct y_key *left, struct y_key *right)
 {
     if(left->typ!=right->typ) return (left->typ<right->typ)?-1:1;
     if(left->ino!=right->ino) return (left->ino<right->ino)?-1:1;
     if(left->len!=right->len) return (left->len<right->len)?-1:1;
-    return (left->typ=='m')?strcmp(left->name, right->name):0;
+    return (left->typ=='m')?strncmp(left->name, right->name, left->len):0;
 }
 
 unsigned long sdbm_hash(const unsigned char *str)
