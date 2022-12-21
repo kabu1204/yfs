@@ -17,8 +17,11 @@ yssd is responsible for indexing KV objects and transaction management.
   - [K2V index (LSM Tree)](#k2v-index-lsm-tree)
     - [Table layout](#table-layout)
       - [Meta block](#meta-block)
-    - [Page layout](#page-layout)
+    - [Data Block](#data-block)
     - [K2V index](#k2v-index)
+    - [MemIndex](#memindex)
+    - [Flush](#flush)
+    - [Compaction](#compaction)
   - [Value Log](#value-log)
     - [General Process](#general-process)
     - [Garbage Collection](#garbage-collection)
@@ -47,13 +50,39 @@ yssd is responsible for indexing KV objects and transaction management.
 
 ![](./docs/assets/meta_block.jpg)
 
-### Page layout
+### Data Block
 
-![](./docs/assets/page_layout.jpg)
+![](./docs/assets/data_block.jpg)
 
 ### K2V index
 
 ![](./docs/assets/k2v_index.jpg)
+
+### MemIndex
+
+MemIndex is an in-memory rbtree, which stores the <start_key, end_key, ptr> of each data block.
+These entries are sorted by the start_key and timestamp.
+When we need to search for KV on disk, we first lookup MemIndex to get blocks that may store the key, and iterate by the time sequence.
+
+![](./docs/assets/memindex.jpg)
+
+### Flush
+
+Keys in each SSTable are sorted.
+The key range between SSTables can be overlapped. 
+Each SSTable is 2MB, the reserved space for level0 is 8MB.
+
+![](./docs/assets/lsmtree_flush.jpg)
+
+### Compaction
+
+When there are 4 SSTables in level0, the compaction thread will merge all SSTables in level0, and appends to level1.
+
+![](./docs/assets/compact0.jpg)
+
+![](./docs/assets/compact1.jpg)
+
+![](./docs/assets/compact2.jpg)
 
 ## Value Log
 
