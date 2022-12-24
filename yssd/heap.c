@@ -2,6 +2,14 @@
 #include <linux/string.h>
 #include <linux/printk.h>
 
+inline void min_heap_init(struct min_heap* h, unsigned int cap, unsigned int size, min_heap_less_t less, min_heap_swap_t swap){
+    h->size = size;
+    h->cap = cap;
+    h->len = 0;
+    h->less = less;
+    h->swap = swap;
+}
+
 inline void heap_down(struct min_heap *h, unsigned int pos){
     void *lc, *rc, *parent, *t, *arr;
     arr = h->arr;
@@ -43,6 +51,7 @@ inline int min_heap_push(struct min_heap *h, void* p){
         if(h->less(parent, child)) break;
         h->swap(parent, child);
         child = parent;
+        pos = (pos-1)>>1;
     }
     ++h->len;
     return 1;
@@ -81,4 +90,12 @@ inline void min_heapify(struct min_heap *h){
 
 inline void* min_heap_min(struct min_heap* h){
     return h->arr;
+}
+
+inline int min_heap_empty(struct min_heap *h){
+    return h->len==0;
+}
+
+inline void min_heap_clear(struct min_heap *h){
+    h->len = 0;
 }

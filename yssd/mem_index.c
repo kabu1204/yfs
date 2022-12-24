@@ -1,24 +1,27 @@
 #include "mem_index.h"
 #include "types.h"
 
-inline int y_rb_index_cmp(struct y_rb_index* left, struct y_rb_index* right){
+inline int y_rbi_cmp(struct y_rb_index* left, struct y_rb_index* right){
     int res = y_key_cmp(&left->start, &right->start);
     if(res==0){
-        if(left->blk.table_no!=right->blk.table_no) return (left->blk.table_no<right->blk.table_no)?-1:1;
-        if(left->blk.block_no!=right->blk.block_no) return (left->blk.block_no<right->blk.block_no)?-1:1;
-        return 0;
+        res = y_key_cmp(&left->end, &right->end);
+        if(res==0){
+            if(left->blk.table_no!=right->blk.table_no) return (left->blk.table_no<right->blk.table_no)?-1:1;
+            if(left->blk.block_no!=right->blk.block_no) return (left->blk.block_no<right->blk.block_no)?-1:1;
+            return 0;
+        }
     }
     return res;
 }
 
-struct y_rb_index* y_rbi_find(struct rb_root* root, struct y_key* key){
+struct y_rb_index* y_rbi_find(struct rb_root* root, struct y_rb_index* target){
     int res;
     struct y_rb_index *cur;
     struct rb_node* node = root->rb_node;
     while(node)
     {
         cur = container_of(node, struct y_rb_index, node);
-        res = y_key_cmp(key, &cur->start);
+        res = y_rbi_cmp(target, cur);
         if(res>0) node = node->rb_right;
         else if(res<0) node = node->rb_left;
         else return cur;
@@ -32,12 +35,7 @@ int y_rbi_insert(struct rb_root* root, struct y_rb_index* elem){
     struct rb_node **new = &(root->rb_node), *parent = NULL;
     while (*new) {
         this = container_of(*new, struct y_rb_index, node);
-        res = y_key_cmp(&elem->start, &this->start);
-        if(unlikely(res==0)){
-            if(elem->blk.table_no!=this->blk.table_no) res = (elem->blk.table_no>this->blk.table_no)?-1:1;
-            else if(elem->blk.block_no!=this->blk.block_no) res = (elem->blk.block_no>this->blk.block_no)?-1:1;
-            else res = 0;
-        }
+        res = y_rbi_cmp(elem, this);
         parent = *new;
         if(res < 0) new = &((*new)->rb_left);
         else if(res > 0) new = &((*new)->rb_right);

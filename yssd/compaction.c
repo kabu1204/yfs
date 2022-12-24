@@ -17,44 +17,46 @@ void memtable_flush(struct lsm_tree* lt){
     unsigned long off;
     unsigned long metap;
     struct bloom_filter* bfs[Y_DATA_BLOCK_PER_TABLE];
-    struct y_rb_node* rbnode;
-    struct y_rb_index* indices[Y_DATA_BLOCK_PER_TABLE];
+    struct y_rb_node* rbnode, *tmp;
+    struct y_rb_index* indices[Y_DATA_BLOCK_PER_TABLE], *rbi;
     struct rb_node* cur, *prev;
     struct y_k2v* k2v;
 
+    struct rb_node* rbn;
+
     prev_size = k2v_size = 0;
     metap = Y_META_BLOCK_HEADER_SIZE;
-    i_block = 0;
-    basep = Y_BLOCK_SIZE;
+    i_block = -1;
+    basep = 0;
     off = 0;
     start = 0;
     buf = lt->comp_buf;
-    bfs[0] = bloom_alloc();
-    indices[0] = kzalloc(sizeof(struct y_rb_index), GFP_KERNEL);
 
     read_lock(&lt->imm_lk);
+    if(!rb_first(lt->imm_table)){
+        read_unlock(&lt->imm_lk);
+        return;
+    }
 
-    cur = rb_first(lt->imm_table);
-    k2v = &rb_entry(cur, struct y_rb_node, node)->kv;
-    bloom_add(bfs[0], &k2v->key);
-    indices[0]->start = k2v->key;
-    prev_size = k2v_size = dump_k2v(buf+metap, &k2v->key, k2v->ptr, k2v->timestamp);
-    memcpy(buf+basep, buf+metap, k2v_size);
-    memcpy(buf, buf+metap, k2v_size);   // table start_key
-    metap += LSM_TREE_MAX_K2V_SIZE;
-
-    for(prev=cur, cur = rb_next(cur); cur; prev=cur, cur = rb_next(cur)){
+    off = Y_BLOCK_SIZE;
+    for(prev=NULL, cur = rb_first(lt->imm_table); cur; prev=cur, cur = rb_next(cur)){
         rbnode = rb_entry(cur, struct y_rb_node, node);
         k2v = &rbnode->kv;
-        rb_entry(prev, struct y_rb_node, node)->nxt = rbnode;
+        if(likely(prev))
+            rb_entry(prev, struct y_rb_node, node)->nxt = rbnode;
         k2v_size = lsm_k2v_size(&k2v->key);
         if(unlikely(off + k2v_size > Y_BLOCK_SIZE)){
-            memcpy(buf+metap, buf+basep+off-prev_size, prev_size);  // dump end_key of i_block
-            indices[i_block]->end = rb_entry(prev, struct y_rb_node, node)->kv.key;
+            if(likely(prev)){
+                memcpy(buf+metap, buf+basep+off-prev_size, prev_size);  // block end_key
+                metap += Y_MAX_K2V_SIZE;
+                indices[i_block]->end = rb_entry(prev, struct y_rb_node, node)->kv.key;
+            }
+            if(off<Y_BLOCK_SIZE){
+                memset(buf+basep+off, 0, Y_BLOCK_SIZE-off);
+            }
             bfs[++i_block] = bloom_alloc();
             indices[i_block] = kzalloc(sizeof(struct y_rb_index), GFP_KERNEL);
             indices[i_block]->start = k2v->key;
-            metap += LSM_TREE_MAX_K2V_SIZE;
             basep += Y_BLOCK_SIZE;
             start = 1;
             off = 0;
@@ -64,8 +66,8 @@ void memtable_flush(struct lsm_tree* lt){
             pr_err("[compact] k2v_size unmatch\n");
         }
         if(unlikely(start)){
-            memcpy(buf+metap, buf+basep+off, k2v_size);
-            metap += LSM_TREE_MAX_K2V_SIZE;
+            memcpy(buf+metap, buf+basep+off, k2v_size); // block start_key
+            metap += Y_MAX_K2V_SIZE;
             start = 0;
         }
         off += k2v_size;
@@ -74,34 +76,47 @@ void memtable_flush(struct lsm_tree* lt){
     rb_entry(prev, struct y_rb_node, node)->nxt = NULL;
     read_unlock(&lt->imm_lk);
 
+    memcpy(buf, buf+Y_BLOCK_SIZE, lsm_k2v_size(&rb_entry(rb_first(lt->imm_table), struct y_rb_node, node)->kv.key));   // table start_key
+
     memcpy(buf, buf+basep+off-prev_size, prev_size);
     memcpy(buf+metap, buf, prev_size);  // table end_key
-    metap += LSM_TREE_MAX_K2V_SIZE;
+    indices[i_block]->end = rb_entry(prev, struct y_rb_node, node)->kv.key;
+    metap += Y_MAX_K2V_SIZE;
 
     for(i=0;i<=i_block;++i){
         memcpy(buf+metap, bfs[i], sizeof(struct bloom_filter));
+        kfree(bfs[i]);
         metap += sizeof(struct bloom_filter);
-        indices[i]->blk.table_no = lt->n_tables;
+        indices[i]->blk.table_no = lt->nr_l0;
         indices[i]->blk.block_no = i;
     }
 
     pr_info("[compact] dump bloom filters finished, metap = %luKB\n", metap>>10);
 
-    yssd_write_phys_pages(buf, lt->head, Y_TABLE_SIZE>>Y_PAGE_SHIFT);
+    yssd_write_phys_pages(buf, lt->p0, Y_TABLE_SIZE>>Y_PAGE_SHIFT);
 
-    pr_info("[compact] head moved from %u to %u\n", lt->head, lt->head + (Y_TABLE_SIZE>>Y_PAGE_SHIFT));
-    lt->head += Y_TABLE_SIZE>>Y_PAGE_SHIFT;
+    pr_info("[compact] p0 moved from %u to %lu\n", lt->p0, lt->p0+(Y_TABLE_SIZE>>Y_PAGE_SHIFT));
+    lt->p0 += Y_TABLE_SIZE>>Y_PAGE_SHIFT;
+
+    pr_info("[compact] start: %u end:%u\n", rb_entry(rb_first(lt->imm_table), struct y_rb_node, node)->kv.key.ino, rb_entry(rb_last(lt->imm_table), struct y_rb_node, node)->kv.key.ino);
 
     write_lock(&lt->index_lk);
     for(i=0;i<=i_block;++i){
         y_rbi_insert(lt->mem_index, indices[i]);
     }
+    lt->mem_index_nr += i_block+1;
+    ++lt->nr_l0;
+    // for(rbn=rb_first(lt->mem_index), i=0; rbn; ++i, rbn = rb_next(rbn)){
+    //     rbi = rb_entry(rbn, struct y_rb_index, node);
+    //     pr_info("[compact] rbi %d: (%u, %u)\n", i, rbi->start.ino, rbi->end.ino);
+    // }
     write_unlock(&lt->index_lk);
 
     write_lock(&lt->imm_lk);
-    for(rbnode=rb_entry(rb_first(lt->imm_table), struct y_rb_node, node); rbnode; rbnode=rbnode->nxt){
+    for(rbnode=rb_entry(rb_first(lt->imm_table), struct y_rb_node, node), tmp=rbnode->nxt; tmp; rbnode=tmp, tmp=rbnode->nxt){
         kmem_cache_free(lt->rb_node_slab, rbnode);
     }
+    kmem_cache_free(lt->rb_node_slab, rbnode);
     kfree(lt->imm_table);
     lt->imm_table = NULL;
     write_unlock(&lt->imm_lk);
@@ -149,6 +164,10 @@ int compact_deamon(void* arg){
 inline unsigned int lsm_k2v_size(struct y_key* key)
 {
     return 22+((key->typ==Y_KV_META)?(1+key->len):4);
+}
+
+inline int k2v_valid(const char *buf){
+    return buf[0]=='#';
 }
 
 inline unsigned int dump_k2v(char* buf, struct y_key* key, struct y_val_ptr ptr, unsigned long timestamp){

@@ -18,7 +18,6 @@ void kv_init(){
     vlog_init(&vlog);
     mutex_init(&glk);
 
-    lt.head = Y_RESERVED_PAGES;
     vlog.lt = &lt;
     vlog.head = vlog.tail1 = vlog.tail2 = n_pages-1;
     wake_up_process(vlog.write_thread);

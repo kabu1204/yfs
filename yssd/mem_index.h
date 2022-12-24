@@ -3,6 +3,7 @@
 
 #include <linux/rbtree.h>
 #include "types.h"
+#include <linux/hashtable.h>
 
 struct y_block {
     unsigned int table_no;
@@ -17,9 +18,17 @@ struct y_rb_index {
     struct y_rb_index* nxt;  // for iteration
 };
 
-inline int y_rb_index_cmp(struct y_rb_index* left, struct y_rb_index* right);
+struct mem_index {
+    struct rb_root rb;
+};
 
-struct y_rb_index* y_rbi_find(struct rb_root* root, struct y_key* key);
+int y_block_greater(const void* left, const void* right);
+
+void y_block_swap(void* left, void *right);
+
+int y_rbi_cmp(struct y_rb_index* left, struct y_rb_index* right);
+
+struct y_rb_index* y_rbi_find(struct rb_root* root, struct y_rb_index* target);
 
 int y_rbi_insert(struct rb_root* root, struct y_rb_index* elem);
 

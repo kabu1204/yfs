@@ -144,19 +144,25 @@ void vlog_gc(struct value_log* vlog){
 
     pr_info("[GC %u] total_pages = %u\n", gc_times, total_pages);
 
-    buf = vzalloc(Y_VLOG_FLUSH_SIZE);
+    buf = vzalloc(Y_VLOG_FLUSH_SIZE+Y_PAGE_SIZE);
     yssd_read_phys_page(buf, head);
-    nbytes = Y_PAGE_SIZE;
+    // nbytes = Y_PAGE_SIZE;
 
     while(count < total_pages){
-        npages = *(unsigned int*)(buf+(nbytes-4));
+        npages = *(unsigned int*)(buf+(Y_PAGE_SIZE-4));
         count += npages;
         head -= npages;
         nbytes = npages << Y_PAGE_SHIFT;
         p = 0;
         ++round;
         pr_info("[GC %u Round %lu] npages = %u nbytes = %u\n", gc_times, round, npages, nbytes);
-        yssd_read_phys_pages(buf, head+1, npages);
+        /*
+            |XXXXX|XXXXXXXX|
+                 ↑
+                 H
+            read one more page to determine next round's npages
+        */
+        yssd_read_phys_pages(buf, head, npages+1);
         while(p+VLOG_RESET_IN_MEM_SIZE<nbytes){
             int n;
             vlnode = kmem_cache_alloc(vl_slab, GFP_KERNEL);
@@ -164,7 +170,7 @@ void vlog_gc(struct value_log* vlog){
                 pr_err("[GC %u] slab alloc failed\n", gc_times);
             }
 
-            n = vlog_node_load(buf+p, &vlnode->vnode);
+            n = vlog_node_load(buf+Y_PAGE_SIZE+p, &vlnode->vnode);
             if(unlikely(n==0)){
                 pr_info("[GC %u] load end\n", gc_times);
                 kmem_cache_free(vl_slab, vlnode);

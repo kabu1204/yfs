@@ -10,6 +10,8 @@
 #include <linux/hdreg.h>
 #include <linux/rbtree.h>
 #include <linux/random.h>
+#include "heap.h"
+#include "lsmtree.h"
 #include "mem_index.h"
 #include "rbkv.h"
 #include "types.h"
@@ -388,25 +390,47 @@ static void test_kv_lsm_flush(void){
         kfree(val->buf);
         kfree(val);
     }
-    // for(i=0;i<65536;++i){
-    //     key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
-    //     val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
-    //     val->buf = kmalloc(256, GFP_KERNEL);
-    //     key->ino = i;
-    //     key->len = 24;
-    //     key->typ = 'm';
-    //     strcpy(key->name, "key1key1key1key1key1key1");
-    //     val->len = 256;
-    //     memcpy(val->buf, "hello, yssd.", 12);
-    //     kv_get(key, val);
-    //     t = *(int*)(val->buf + 12);
-    //     if(t!=(65536*9+i)){
-    //         pr_info("err %d %d\n", (65536*9+i), t);
-    //     }
-    //     kfree(key);
-    //     kfree(val->buf);
-    //     kfree(val);
-    // }
+    for(i=0;i<65536;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i;
+        key->len = 24;
+        key->typ = 'm';
+        strcpy(key->name, "key1key1key1key1key1key1");
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        kv_get(key, val);
+        t = *(int*)(val->buf + 12);
+        if(t!=(65536*9+i)){
+            pr_info("err %d %d\n", (65536*9+i), t);
+        }
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+}
+
+static void test_min_heap_block(void){
+    struct min_heap h;
+    unsigned int tno[10] = {0, 5, 1, 3, 6, 8, 2, 4, 2, 2};
+    int i;
+    unsigned int bno[10] = {3, 10, 6, 8, 4, 5, 1, 9, 7, 2};
+    min_heap_init(&h, 1024, sizeof(struct y_block), y_block_greater, y_block_swap);
+    h.arr = kvmalloc(h.cap*h.size, GFP_KERNEL);
+    for(i=0;i<10;++i){
+        struct y_block blk = {
+            .table_no = tno[i],
+            .block_no = bno[i],
+        };
+        min_heap_push(&h, &blk);
+    }
+    for(i=0;i<10;++i){
+        struct y_block blk =* (struct y_block*)min_heap_min(&h);
+        min_heap_pop(&h);
+        pr_info("tno: %u, bno: %u\n", blk.table_no, blk.block_no);
+    }
+    kvfree(h.arr);
 }
 
 void test_rb_index_lower_bound(void){
@@ -434,15 +458,15 @@ void test_rb_index_lower_bound(void){
         if(rbi!=NULL){
             pr_info("lower_bound of %u: (%u, %u)\n", key.ino, rbi->start.ino, rbi->blk.block_no);
         }
-        if(i==4){
-            for(cur = &rbi->node; cur; cur=rb_next(cur)){
-                rbi = rb_entry(cur, struct y_rb_index, node);
-                pr_info("ino=%u blk=%u\n", rbi->start.ino, rbi->blk.block_no);
-            }
-        }
         rbi = y_rbi_upper_bound(&root, &key);
         if(rbi!=NULL){
             pr_info("upper_bound of %u: (%u, %u)\n", key.ino, rbi->start.ino, rbi->blk.block_no);
+        }
+        if(i==4){
+            for(cur = rb_prev(&rbi->node); cur; cur=rb_prev(cur)){
+                rbi = rb_entry(cur, struct y_rb_index, node);
+                pr_info("ino=%u blk=%u\n", rbi->start.ino, rbi->blk.block_no);
+            }
         }
     }
 }
@@ -584,8 +608,9 @@ static int __init yssd_init(void)
     // test_kv_flush_get();
     // test_kv_gc();
     // test_kv_gc_reset();
-    // test_kv_lsm_flush();
-    test_rb_index_lower_bound();
+    test_kv_lsm_flush();
+    // test_min_heap_block();
+    // test_rb_index_lower_bound();
 
     pr_info("YSSD test finished\n");
     return 0;

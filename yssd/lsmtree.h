@@ -4,22 +4,29 @@
 #include "rbkv.h"
 #include "skiplist.h"
 #include "types.h"
+#include "heap.h"
 
-#define LSM_TREE_FLUSH_PER_COMPACT 4
-#define LSM_TREE_MAX_K2V_SIZE      256
+#define LSM_TREE_FLUSH_PER_COMPACT 20
 #define LSM_TREE_RESET_IN_MEM_SIZE 0
+#define LSM_TREE_LEVEL0_START_PAGE NR_RESERVED_PAGE
+#define LSM_TREE_LEVEL1_START_PAGE (LSM_TREE_LEVEL0_START_PAGE+LSM_TREE_FLUSH_PER_COMPACT*(Y_TABLE_SIZE>>Y_PAGE_SHIFT))
 
 struct lsm_tree {
-    unsigned int head;
-    unsigned int n_tables;
+    unsigned int p0;
+    unsigned int p1;
+    unsigned int nr_l0;
+    unsigned int nr_l1;
     unsigned int mem_size;
     unsigned int imm_size;
     unsigned int n_flush;
     unsigned int max_k2v_size;
+    unsigned int mem_index_nr;
 
     struct rb_root* mem_table;
     struct rb_root* imm_table;
     struct rb_root* mem_index;
+
+    struct min_heap hp;
 
     rwlock_t ext_lk, mem_lk, imm_lk, index_lk;
 
@@ -28,6 +35,7 @@ struct lsm_tree {
 
     struct kmem_cache* rb_node_slab;
     char *comp_buf;
+    char *read_buf;
 };
 
 /*
@@ -57,7 +65,11 @@ void lsm_tree_del(struct lsm_tree* lt, struct y_key* key, unsigned long timestam
 
 void lsm_tree_iter(struct lsm_tree* lt, struct y_key* key);
 
+struct y_k2v* lsm_tree_get_slow(struct lsm_tree* lt, struct y_key* key);
+
 unsigned int lsm_k2v_size(struct y_key* key);
+
+int k2v_valid(const char *buf);
 
 void wakeup_compact(struct lsm_tree* lt);
 
