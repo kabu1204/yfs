@@ -6,6 +6,7 @@
 #include <linux/slab.h>
 #include "mem_index.h"
 #include <linux/rbtree.h>
+#include <linux/kthread.h>
 
 void memtable_flush(struct lsm_tree* lt){
     char* buf;
@@ -18,11 +19,9 @@ void memtable_flush(struct lsm_tree* lt){
     unsigned long metap;
     struct bloom_filter* bfs[Y_DATA_BLOCK_PER_TABLE];
     struct y_rb_node* rbnode, *tmp;
-    struct y_rb_index* indices[Y_DATA_BLOCK_PER_TABLE], *rbi;
+    struct y_rb_index* indices[Y_DATA_BLOCK_PER_TABLE];
     struct rb_node* cur, *prev;
     struct y_k2v* k2v;
-
-    struct rb_node* rbn;
 
     prev_size = k2v_size = 0;
     metap = Y_META_BLOCK_HEADER_SIZE;
@@ -50,6 +49,7 @@ void memtable_flush(struct lsm_tree* lt){
                 memcpy(buf+metap, buf+basep+off-prev_size, prev_size);  // block end_key
                 metap += Y_MAX_K2V_SIZE;
                 indices[i_block]->end = rb_entry(prev, struct y_rb_node, node)->kv.key;
+                // pr_info("[compact] (%u, %u) end=  %u\n", lt->nr_l0, i_block, indices[i_block]->end.ino);
             }
             if(off<Y_BLOCK_SIZE){
                 memset(buf+basep+off, 0, Y_BLOCK_SIZE-off);
@@ -67,6 +67,7 @@ void memtable_flush(struct lsm_tree* lt){
         }
         if(unlikely(start)){
             memcpy(buf+metap, buf+basep+off, k2v_size); // block start_key
+            // pr_info("[compact] (%u, %u) start=%u\n", lt->nr_l0, i_block, k2v->key.ino);
             metap += Y_MAX_K2V_SIZE;
             start = 0;
         }
@@ -78,10 +79,12 @@ void memtable_flush(struct lsm_tree* lt){
 
     memcpy(buf, buf+Y_BLOCK_SIZE, lsm_k2v_size(&rb_entry(rb_first(lt->imm_table), struct y_rb_node, node)->kv.key));   // table start_key
 
-    memcpy(buf, buf+basep+off-prev_size, prev_size);
-    memcpy(buf+metap, buf, prev_size);  // table end_key
+    memcpy(buf+Y_MAX_K2V_SIZE, buf+basep+off-prev_size, prev_size);
+    memcpy(buf+metap, buf+Y_MAX_K2V_SIZE, prev_size);  // table end_key
     indices[i_block]->end = rb_entry(prev, struct y_rb_node, node)->kv.key;
     metap += Y_MAX_K2V_SIZE;
+
+    *(unsigned int*)(buf+Y_MAX_K2V_SIZE*2) = i_block+1;
 
     for(i=0;i<=i_block;++i){
         memcpy(buf+metap, bfs[i], sizeof(struct bloom_filter));
@@ -98,7 +101,7 @@ void memtable_flush(struct lsm_tree* lt){
     pr_info("[compact] p0 moved from %u to %lu\n", lt->p0, lt->p0+(Y_TABLE_SIZE>>Y_PAGE_SHIFT));
     lt->p0 += Y_TABLE_SIZE>>Y_PAGE_SHIFT;
 
-    pr_info("[compact] start: %u end:%u\n", rb_entry(rb_first(lt->imm_table), struct y_rb_node, node)->kv.key.ino, rb_entry(rb_last(lt->imm_table), struct y_rb_node, node)->kv.key.ino);
+    pr_info("[compact] start: %u end: %u\n", rb_entry(rb_first(lt->imm_table), struct y_rb_node, node)->kv.key.ino, rb_entry(rb_last(lt->imm_table), struct y_rb_node, node)->kv.key.ino);
 
     write_lock(&lt->index_lk);
     for(i=0;i<=i_block;++i){
@@ -145,8 +148,11 @@ void wakeup_compact(struct lsm_tree* lt){
 
 int compact_deamon(void* arg){
     struct lsm_tree* lt = arg;
-    while(1){
+    while(!lt->compact_thread_stop){
         wait_event_interruptible(lt->waitq, lt->imm_table!=NULL);
+        if(lt->compact_thread_stop){
+            break;
+        }
         pr_info("[lsmtree] compaction thread wake up\n");
         memtable_flush(lt);
         pr_info("[lsmtree] flush finished\n");
@@ -158,6 +164,7 @@ int compact_deamon(void* arg){
         }
         wake_up_interruptible(&lt->waitq);
     }
+    pr_info("[compact] compact thread stopped\n");
     return 0;
 }
 

@@ -25,12 +25,13 @@ void lsm_tree_init(struct lsm_tree* lt){
     lt->n_flush = 0;
     lt->max_k2v_size = 0;
     lt->mem_index_nr = 0;
+    lt->compact_thread_stop = 0;
     lt->p0 = LSM_TREE_LEVEL0_START_PAGE;
     lt->p1 = LSM_TREE_LEVEL1_START_PAGE;
     lt->mem_size = LSM_TREE_RESET_IN_MEM_SIZE;
     lt->comp_buf = kvmalloc(Y_TABLE_SIZE, GFP_KERNEL);
     lt->read_buf = kvmalloc(Y_BLOCK_SIZE, GFP_KERNEL);
-    min_heap_init(&lt->hp, 1024, sizeof(struct y_block), y_block_greater, y_block_swap);
+    min_heap_init(&lt->hp, 64, sizeof(struct y_block), y_block_greater, y_block_swap);
     lt->hp.arr = kvmalloc(lt->hp.cap*sizeof(struct y_block), GFP_KERNEL);
     init_waitqueue_head(&lt->waitq);
     lt->compact_thread = kthread_create(compact_deamon, lt, "yssd compact thread");
@@ -39,6 +40,7 @@ void lsm_tree_init(struct lsm_tree* lt){
     rwlock_init(&lt->imm_lk);
     rwlock_init(&lt->ext_lk);
     rwlock_init(&lt->index_lk);
+    mutex_init(&lt->hp_lk);
 
     pr_info("[lsmtree] Y_BLOCK_SIZE: %luB(%luKB)\n", Y_BLOCK_SIZE, Y_BLOCK_SIZE>>10);
     pr_info("[lsmtree] Y_TABLE_SIZE: %luB(%luKB)\n", Y_TABLE_SIZE, Y_TABLE_SIZE>>10);
@@ -75,6 +77,7 @@ struct y_val_ptr lsm_tree_get(struct lsm_tree* lt, struct y_key* key){
     read_unlock(&lt->imm_lk);
     
 slow:
+    // pr_info("slow\n");
     k2v = lsm_tree_get_slow(lt, key);
     if(unlikely(!k2v)){
         read_unlock(&lt->ext_lk);
@@ -96,6 +99,8 @@ struct y_k2v* lsm_tree_get_slow(struct lsm_tree* lt, struct y_key* key){
     struct bloom_filter* bf;
     unsigned int p = 0, size;
     char* buf;
+
+    mutex_lock(&lt->hp_lk);
     buf = lt->read_buf;
     k2v = kzalloc(sizeof(struct y_k2v), GFP_KERNEL);
 
@@ -119,27 +124,37 @@ struct y_k2v* lsm_tree_get_slow(struct lsm_tree* lt, struct y_key* key){
         blk = *(struct y_block*)min_heap_min(h);
         min_heap_pop(h);
 
-        yssd_read_phys_pages(buf, LSM_TREE_LEVEL0_START_PAGE+blk.table_no*(Y_TABLE_SIZE>>Y_PAGE_SHIFT), Y_BLOCK_SIZE>>Y_PAGE_SHIFT);
+
+        size = Y_META_BLOCK_BF_OFFSET+sizeof(struct bloom_filter)*blk.block_no;
+        p = (size>>Y_PAGE_SHIFT)<<Y_PAGE_SHIFT;
+        size = size & (Y_PAGE_SIZE-1);
+
+        yssd_read_phys_page(buf, LSM_TREE_LEVEL0_START_PAGE+blk.table_no*(Y_TABLE_SIZE>>Y_PAGE_SHIFT)+(p>>Y_PAGE_SHIFT));
         
-        if(unlikely(read_k2v(buf+Y_META_BLOCK_HEADER_SIZE+Y_MAX_K2V_SIZE*2*blk.block_no, k2v)==0)){
-            pr_warn("[slow get] broken start key of (%u, %u)\n", blk.table_no, blk.table_no);
-        }
+        // if(unlikely(read_k2v(buf+Y_META_BLOCK_HEADER_SIZE+Y_MAX_K2V_SIZE*2*blk.block_no, k2v)==0)){
+        //     pr_warn("[slow get] broken start key of (%u, %u)\n", blk.table_no, blk.table_no);
+        // }
 
-        if(unlikely(y_key_cmp(&k2v->key, key)>0)){
-            pr_warn("[slow get] error start key, ino=%u\n", k2v->key.ino);
-        }
+        // if(unlikely(y_key_cmp(&k2v->key, key)>0)){
+        //     pr_warn("[slow get] error start key, ino=%u, want=%u, tno=%u, bno=%u, page_no=%lu\n", k2v->key.ino, key->ino, blk.table_no, blk.block_no, LSM_TREE_LEVEL0_START_PAGE+blk.table_no*(Y_TABLE_SIZE>>Y_PAGE_SHIFT));
+        //     cur = (hi) ? rb_prev(&hi->node) : rb_last(lt->mem_index);
+        //     for(; cur; cur = rb_prev(cur)){
+        //         rbi = rb_entry(cur, struct y_rb_index, node);
+        //         if(y_key_cmp(&rbi->end, key)>=0){
+        //             pr_info("[slow] (%u, %u), (%u, %u)\n", rbi->start.ino, rbi->end.ino, rbi->blk.table_no, rbi->blk.block_no);
+        //         }
+        //     }
+        // }
 
-        if(unlikely(read_k2v(buf+Y_META_BLOCK_HEADER_SIZE+Y_MAX_K2V_SIZE*2*blk.block_no+Y_MAX_K2V_SIZE, k2v)==0)){
-            pr_warn("[slow get] broken end key of (%u, %u)", blk.table_no, blk.table_no);
-        }
+        // if(unlikely(read_k2v(buf+Y_META_BLOCK_HEADER_SIZE+Y_MAX_K2V_SIZE*2*blk.block_no+Y_MAX_K2V_SIZE, k2v)==0)){
+        //     pr_warn("[slow get] broken end key of (%u, %u)", blk.table_no, blk.table_no);
+        // }
 
-        if(unlikely(y_key_cmp(&k2v->key, key)<0)){
-            pr_warn("[slow get] error end key, ino=%u\n", k2v->key.ino);
-        }
+        // if(unlikely(y_key_cmp(&k2v->key, key)<0)){
+        //     pr_warn("[slow get] error end key, ino=%u\n", k2v->key.ino);
+        // }
 
-        bf = (struct bloom_filter*)(buf + Y_META_BLOCK_BF_OFFSET+sizeof(struct bloom_filter)*blk.block_no);
-
-        // pr_info("[slow get] reading blk(%u, %u) at page %lu\n", blk.table_no, blk.block_no, LSM_TREE_LEVEL0_START_PAGE+blk.table_no*(Y_TABLE_SIZE>>Y_PAGE_SHIFT)+(blk.block_no+1)*(Y_BLOCK_SIZE>>Y_PAGE_SHIFT));
+        bf = (struct bloom_filter*)(buf+size);
 
         if(bloom_contains(bf, key)){
             yssd_read_phys_pages(buf, LSM_TREE_LEVEL0_START_PAGE+blk.table_no*(Y_TABLE_SIZE>>Y_PAGE_SHIFT)+(blk.block_no+1)*(Y_BLOCK_SIZE>>Y_PAGE_SHIFT), Y_BLOCK_SIZE>>Y_PAGE_SHIFT);
@@ -156,8 +171,9 @@ struct y_k2v* lsm_tree_get_slow(struct lsm_tree* lt, struct y_key* key){
     kfree(k2v);
     k2v = NULL;
 out:
-    read_unlock(&lt->index_lk);
     min_heap_clear(h);
+    read_unlock(&lt->index_lk);
+    mutex_unlock(&lt->hp_lk);
 
     return k2v;
 }
@@ -207,6 +223,7 @@ void lsm_tree_set(struct lsm_tree* lt, struct y_key* key, struct y_val_ptr ptr, 
     res = y_rb_insert(lt->mem_table, node);
     if(unlikely(res==-1)){
         pr_warn("invalid timestamp\n");
+        kmem_cache_free(lt->rb_node_slab, node);
     }
     if(res==0){ // update
         kmem_cache_free(lt->rb_node_slab, node);
@@ -297,6 +314,7 @@ set:
     res = y_rb_insert(lt->mem_table, node);
     if(res==-1){
         pr_warn("invalid timestamp\n");
+        kmem_cache_free(lt->rb_node_slab, node);
     }
     if(res==0){ // update
         kmem_cache_free(lt->rb_node_slab, node);
@@ -334,6 +352,7 @@ void lsm_tree_del(struct lsm_tree* lt, struct y_key* key, unsigned long timestam
     res = y_rb_insert(lt->mem_table, node);
     if(res==-1){
         pr_warn("invalid timestamp\n");
+        kmem_cache_free(lt->rb_node_slab, node);
     }
     if(res==0){ // update
         kmem_cache_free(lt->rb_node_slab, node);
@@ -348,4 +367,43 @@ void lsm_tree_del(struct lsm_tree* lt, struct y_key* key, unsigned long timestam
 
 void lsm_tree_iter(struct lsm_tree* lt, struct y_key* key){
 
+}
+
+void lsm_tree_close(struct lsm_tree* lt){
+    struct y_rb_index* rbi, *tmp;
+    struct rb_node *cur, *prev;
+
+    write_lock(&lt->ext_lk);
+    wait_event_interruptible(lt->waitq, lt->imm_table==NULL);
+    lt->imm_table = lt->mem_table;
+    lt->mem_table = NULL;
+    lt->imm_size = lt->mem_size;
+    lt->mem_size = LSM_TREE_RESET_IN_MEM_SIZE;
+    lt->max_k2v_size = 0;
+    lt->compact_thread_stop = 1;
+    wake_up_interruptible(&lt->waitq);
+    kthread_stop(lt->compact_thread);
+    memtable_flush(lt);
+
+    kmem_cache_destroy(lt->rb_node_slab);
+
+    for(prev=NULL, cur=rb_first(lt->mem_index); cur; prev=cur, cur=rb_next(cur)){
+        rbi = rb_entry(cur, struct y_rb_index, node);
+        if(prev)
+            rb_entry(prev, struct y_rb_index, node)->nxt = rbi;
+    }
+    rb_entry(prev, struct y_rb_index, node)->nxt = NULL;
+    for(rbi = rb_entry(rb_first(lt->mem_index), struct y_rb_index, node), tmp=rbi->nxt; tmp;rbi=tmp, tmp=rbi->nxt){
+        kfree(rbi);
+    }
+    kfree(rbi);
+
+    kvfree(lt->hp.arr);
+    
+    mutex_destroy(&lt->hp_lk);
+
+    kvfree(lt->comp_buf);
+    kvfree(lt->read_buf);
+
+    write_unlock(&lt->ext_lk);
 }

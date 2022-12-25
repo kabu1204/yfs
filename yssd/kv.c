@@ -64,3 +64,11 @@ void kv_del(struct y_key* key){
 void mannual_gc(void){
     vlog_gc(&vlog);
 }
+
+void kv_close(void){
+    mutex_lock(&glk);
+    vlog_close(&vlog);
+    lsm_tree_close(&lt);
+    mutex_unlock(&glk);
+    mutex_destroy(&glk);
+}

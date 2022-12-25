@@ -22,6 +22,7 @@ void vlog_init(struct value_log* vlog){
     vlog->inactive = NULL;
     vlog->n_flush = 0;
     vlog->catchup = 0;
+    vlog->write_thread_stop = 0;
     init_waitqueue_head(&vlog->waitq);
     rwlock_init(&vlog->rwlock);
     rwlock_init(&vlog->act_lk);
@@ -429,8 +430,9 @@ void vlog_wakeup_or_block(struct value_log* vlog){
 int write_deamon(void* arg)
 {
     struct value_log* vlog = arg;
-    while(1){
+    while(!vlog->write_thread_stop){
         wait_event_interruptible(vlog->waitq, vlog->inactive!=NULL);
+        if(vlog->write_thread_stop) break;
         pr_info("write thread wake up\n");
         vlog_flush(vlog);
         pr_info("[flush] flush finished\n");
@@ -445,5 +447,21 @@ int write_deamon(void* arg)
         }
         wake_up_interruptible(&vlog->waitq);
     }
+    pr_info("[vlog] wrtie thread stopped\n");
     return 0;
+}
+
+void vlog_close(struct value_log* vlog){
+    wait_event_interruptible(vlog->waitq, vlog->inactive==NULL);
+    vlog->inactive = vlog->active;
+    vlog->active = NULL;
+    vlog->inact_size = vlog->in_mem_size;
+    vlog->in_mem_size = VLOG_RESET_IN_MEM_SIZE;
+    vlog->write_thread_stop = 1;
+    wake_up_interruptible(&vlog->waitq);
+    kthread_stop(vlog->write_thread);
+    vlog_flush(vlog);
+
+    kmem_cache_destroy(vlog->vl_slab);
+    kmem_cache_destroy(vlog->vh_slab);
 }

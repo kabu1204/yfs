@@ -28,7 +28,7 @@ void y_k2v_swap(void* left, void* right){
     *(struct y_k2v**)right = t;
 }
 
-void merge_flush(struct lsm_tree* lt, struct y_k2v_list_node* head, struct y_rb_index* old){
+void merge_flush(struct lsm_tree* lt, struct y_k2v_list_node* head, struct y_rb_index* old, unsigned int n_rbi){
     struct y_k2v* k2v;
     struct y_k2v_list_node *cur, *prev;
     struct bloom_filter* bfs[Y_DATA_BLOCK_PER_TABLE];
@@ -130,7 +130,6 @@ void merge_flush(struct lsm_tree* lt, struct y_k2v_list_node* head, struct y_rb_
         kfree(rbi);
         --lt->mem_index_nr;
     }
-    lt->mem_index_nr -= LSM_TREE_FLUSH_PER_COMPACT*Y_DATA_BLOCK_PER_TABLE;
     lt->nr_l1 += n_table;
     lt->nr_l0 = 0;
     lt->p0 = LSM_TREE_LEVEL0_START_PAGE;
@@ -153,7 +152,7 @@ int merge_table(struct lsm_tree* lt, unsigned int k){
     char *buf;
     unsigned int p, basep;
     unsigned int size;
-    unsigned int i, i_block, i_rbi;
+    unsigned int i, i_block, i_rbi, n_block;
     buf = lt->comp_buf;
 
     if(k>EXT_SORT_MAX_K){
@@ -176,7 +175,8 @@ int merge_table(struct lsm_tree* lt, unsigned int k){
         yssd_read_phys_pages(buf, LSM_TREE_LEVEL0_START_PAGE+i*(Y_TABLE_SIZE>>Y_PAGE_SHIFT), Y_TABLE_SIZE>>Y_PAGE_SHIFT);
         cur = &heads[i];
         cur->next = prev = NULL;
-        for(i_block=0;i_block<Y_DATA_BLOCK_PER_TABLE;++i_block, ++i_rbi){
+        n_block = *(unsigned int*)(buf+Y_MAX_K2V_SIZE*2);
+        for(i_block=0;i_block<n_block;++i_block, ++i_rbi){
             p = 0;
             basep = (i_block+1)*Y_BLOCK_SIZE;
             old[i_rbi].blk.table_no = i;
@@ -225,7 +225,7 @@ int merge_table(struct lsm_tree* lt, unsigned int k){
         prev->next = cur;
     }
 
-    merge_flush(lt, out->next, old);
+    merge_flush(lt, out->next, old, i_rbi+1);
 
     for(prev=out, cur = prev->next; prev; prev=cur, cur = prev->next){
         kmem_cache_free(k2v_list_slab, prev);

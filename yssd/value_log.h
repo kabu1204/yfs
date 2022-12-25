@@ -46,6 +46,7 @@ struct value_log {
     unsigned int n_flush;
     unsigned int catchup;
 
+    int write_thread_stop;
 
     struct task_struct* write_thread;
     wait_queue_head_t waitq;
@@ -101,5 +102,7 @@ int write_deamon(void* arg);
 void init_gc_stat(void);
 
 void gc_early(struct value_log* vlog);
+
+void vlog_close(struct value_log* vlog);
 
 #endif

@@ -374,7 +374,8 @@ static void test_kv_lsm_flush(void){
     struct y_key* key;
     struct y_value* val;
     int i, t;
-    for(i=0;i<65536*10;++i){
+    int k = 3;
+    for(i=0;i<65536*k;++i){
         key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
         val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
         val->buf = kmalloc(256, GFP_KERNEL);
@@ -402,8 +403,8 @@ static void test_kv_lsm_flush(void){
         memcpy(val->buf, "hello, yssd.", 12);
         kv_get(key, val);
         t = *(int*)(val->buf + 12);
-        if(t!=(65536*9+i)){
-            pr_info("err %d %d\n", (65536*9+i), t);
+        if(t!=(65536*(k-1)+i)){
+            pr_info("err %d %d\n", (65536*(k-1)+i), t);
         }
         kfree(key);
         kfree(val->buf);
@@ -426,10 +427,28 @@ static void test_min_heap_block(void){
         min_heap_push(&h, &blk);
     }
     for(i=0;i<10;++i){
-        struct y_block blk =* (struct y_block*)min_heap_min(&h);
+        struct y_block blk = *(struct y_block*)min_heap_min(&h);
         min_heap_pop(&h);
         pr_info("tno: %u, bno: %u\n", blk.table_no, blk.block_no);
+        if(i==7){
+            break;
+        }
     }
+
+    min_heap_clear(&h);
+    for(i=7;i<10;++i){
+        struct y_block blk = {
+            .table_no = tno[i],
+            .block_no = bno[i],
+        };
+        min_heap_push(&h, &blk);
+    }
+    while(!min_heap_empty(&h)){
+        struct y_block blk = *(struct y_block*)min_heap_min(&h);
+        min_heap_pop(&h);
+        pr_info("[2] tno: %u, bno: %u\n", blk.table_no, blk.block_no);
+    }
+
     kvfree(h.arr);
 }
 
@@ -468,6 +487,38 @@ void test_rb_index_lower_bound(void){
                 pr_info("ino=%u blk=%u\n", rbi->start.ino, rbi->blk.block_no);
             }
         }
+    }
+}
+
+extern struct lsm_tree lt;
+
+static void test_lsm_flush(void){
+    struct y_key* key;
+    struct y_val_ptr ptr;
+    int i, t;
+    int k = 5;
+    for(i=0;i<65536*k;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        key->ino = i%65536;
+        key->len = 24;
+        key->typ = 'm';
+        ptr.page_no = i;
+        strcpy(key->name, "key1key1key1key1key1key1");
+        lsm_tree_set(&lt, key, ptr, ktime_get_real_fast_ns());
+        kfree(key);
+    }
+    for(i=0;i<65536;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        key->ino = i;
+        key->len = 24;
+        key->typ = 'm';
+        ptr.page_no = i;
+        strcpy(key->name, "key1key1key1key1key1key1");
+        ptr = lsm_tree_get(&lt, key);
+        if(ptr.page_no!=65536*(k-1)+i){
+            pr_err("[err] %u %u\n", ptr.page_no, 65536*(k-1)+i);
+        }
+        kfree(key);
     }
 }
 
@@ -609,6 +660,7 @@ static int __init yssd_init(void)
     // test_kv_gc();
     // test_kv_gc_reset();
     test_kv_lsm_flush();
+    // test_lsm_flush();
     // test_min_heap_block();
     // test_rb_index_lower_bound();
 
@@ -618,9 +670,10 @@ static int __init yssd_init(void)
 
 static void __exit yssd_exit(void)
 {
+    kv_close();
+    yssd_close_file();
     delete_block_dev(&block_device);
     unregister_blkdev(YSSD_MAJOR, YSSD_DEV_NAME);
-    yssd_close_file();
     pr_info("YSSD exit\n");
 }
 

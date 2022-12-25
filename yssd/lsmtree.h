@@ -22,6 +22,8 @@ struct lsm_tree {
     unsigned int max_k2v_size;
     unsigned int mem_index_nr;
 
+    int compact_thread_stop;
+
     struct rb_root* mem_table;
     struct rb_root* imm_table;
     struct rb_root* mem_index;
@@ -29,6 +31,7 @@ struct lsm_tree {
     struct min_heap hp;
 
     rwlock_t ext_lk, mem_lk, imm_lk, index_lk;
+    struct mutex hp_lk;
 
     struct task_struct* compact_thread;
     wait_queue_head_t waitq;
@@ -82,5 +85,7 @@ int compact_deamon(void* arg);
 unsigned int dump_k2v(char* buf, struct y_key* key, struct y_val_ptr ptr, unsigned long timestamp);
 
 unsigned int read_k2v(char *buf, struct y_k2v* k2v);
+
+void lsm_tree_close(struct lsm_tree* lt);
 
 #endif
