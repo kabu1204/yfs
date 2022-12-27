@@ -61,6 +61,32 @@ void kv_del(struct y_key* key){
     mutex_unlock(&glk);
 }
 
+void kv_iter(char typ, unsigned int ino, unsigned int n){
+    struct y_key key = {
+        .typ = typ,
+        .ino = ino,
+        .len = 0,
+        .name = {'\0'}
+    };
+    struct y_val_ptr ptr;
+    struct y_k2v* k2v;
+    char *buf;
+    
+    buf = kmalloc(sizeof(struct y_key)+24, GFP_KERNEL);
+
+    mutex_lock(&glk);
+
+    while(n--){
+        k2v = lsm_tree_get_upper_bound(&lt, &key);
+        sprint_y_key(buf, &k2v->key);
+        pr_info("[iter] %s\n", buf);
+        key = k2v->key;
+        kfree(k2v);
+    }
+    
+    mutex_unlock(&glk);
+}
+
 void mannual_gc(void){
     vlog_gc(&vlog);
 }

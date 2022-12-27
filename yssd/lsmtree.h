@@ -66,7 +66,7 @@ int lsm_tree_get_and_set(struct lsm_tree* lt, struct y_key* key, struct y_val_pt
 
 void lsm_tree_del(struct lsm_tree* lt, struct y_key* key, unsigned long timestamp);
 
-void lsm_tree_iter(struct lsm_tree* lt, struct y_key* key);
+struct y_val_ptr* lsm_tree_iter(struct lsm_tree* lt, struct y_key* key, unsigned int n);
 
 struct y_k2v* lsm_tree_get_slow(struct lsm_tree* lt, struct y_key* key);
 
@@ -87,5 +87,9 @@ unsigned int dump_k2v(char* buf, struct y_key* key, struct y_val_ptr ptr, unsign
 unsigned int read_k2v(char *buf, struct y_k2v* k2v);
 
 void lsm_tree_close(struct lsm_tree* lt);
+
+struct y_k2v* lsm_tree_get_upper_bound(struct lsm_tree* lt, struct y_key* key);
+
+struct y_k2v* lsm_tree_get_slow_upper_bound(struct lsm_tree* lt, struct y_key* key);
 
 #endif

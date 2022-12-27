@@ -18,6 +18,23 @@ struct y_rb_node* y_rb_find(struct rb_root* root, struct y_key* key)
     return NULL;
 }
 
+struct y_rb_node* y_rb_upper_bound(struct rb_root* root, struct y_key* key){
+    int res;
+    struct y_rb_node *cur;
+    struct rb_node* node = root->rb_node, *ret=rb_first(root);
+    while(node)
+    {
+        cur = container_of(node, struct y_rb_node, node);
+        res = y_key_cmp(key, &cur->kv.key);
+        if(res>=0){  // cur <= key
+            ret = rb_next(node);
+            node = node->rb_right;
+        }
+        else node = node->rb_left;    // cur > key
+    }
+    return (ret!=NULL)?container_of(ret, struct y_rb_node, node):NULL;
+}
+
 int y_rb_insert(struct rb_root* root, struct y_rb_node* elem)
 {
     int res;

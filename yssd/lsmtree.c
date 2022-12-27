@@ -365,8 +365,67 @@ void lsm_tree_del(struct lsm_tree* lt, struct y_key* key, unsigned long timestam
     write_unlock(&lt->ext_lk);
 }
 
-void lsm_tree_iter(struct lsm_tree* lt, struct y_key* key){
+struct y_val_ptr* lsm_tree_iter(struct lsm_tree* lt, struct y_key* key, unsigned int n){
+    struct y_k2v* k2v;
+    struct y_key k;
+    struct y_val_ptr* ptr;
+    int i;
+    ptr = kvmalloc(n*sizeof(struct y_val_ptr), GFP_KERNEL);
+    k = *key;
+    for(i=0;i<n;++i){
+        k2v = lsm_tree_get_upper_bound(lt, &k);
+        ptr[i] = k2v->ptr;
+        if(k2v->ptr.page_no==OBJECT_NOT_FOUND){
+            kfree(k2v);
+            break;
+        }
+        k = k2v->key;
+        kfree(k2v);
+    }
+    return ptr;
+}
 
+struct y_k2v* lsm_tree_get_upper_bound(struct lsm_tree* lt, struct y_key* key){
+    struct y_rb_node* node;
+    struct y_k2v* k2v, *t;
+    k2v = kmalloc(sizeof(struct y_k2v), GFP_KERNEL);
+    k2v->ptr.page_no = OBJECT_NOT_FOUND;
+
+    pr_info("[upper] %c:%u:%s\n", key->typ, key->ino, key->name);
+
+    read_lock(&lt->ext_lk);
+
+    // k2v = lsm_tree_get_slow_upper_bound(lt, key);
+
+    read_lock(&lt->mem_lk);
+    node = y_rb_upper_bound(lt->mem_table, key);
+    if(likely(node)){
+        *k2v = node->kv;
+    }
+    read_unlock(&lt->mem_lk);
+    read_lock(&lt->imm_lk);
+    if(!lt->imm_table){
+        read_unlock(&lt->imm_lk);
+        goto slow;
+    }
+    node = y_rb_upper_bound(lt->imm_table, key);
+    if(likely(node)){
+        if(y_key_cmp(&node->kv.key, &k2v->key)<0){
+            *k2v = node->kv;
+        }
+    }
+    read_unlock(&lt->imm_lk);
+    
+slow:
+    // pr_info("slow\n");
+    t = lsm_tree_get_slow_upper_bound(lt, key);
+    if(y_key_cmp(&t->key, &k2v->key)<0){
+        kfree(k2v);
+        k2v = t;
+    }
+
+    read_unlock(&lt->ext_lk);
+    return k2v;
 }
 
 void lsm_tree_close(struct lsm_tree* lt){

@@ -12,6 +12,8 @@ struct y_rb_node {
 
 struct y_rb_node* y_rb_find(struct rb_root* root, struct y_key* key);
 
+struct y_rb_node* y_rb_upper_bound(struct rb_root* root, struct y_key* key);
+
 int y_rb_insert(struct rb_root* root, struct y_rb_node* elem);
 
 void test_y_rbkv_insert(void);

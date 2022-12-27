@@ -522,6 +522,62 @@ static void test_lsm_flush(void){
     }
 }
 
+static void test_kv_iter(void){
+    struct y_key* key;
+    struct y_value* val;
+    int i, t;
+    int k = 2;
+    for(i=0;i<10;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = 1234;
+        key->typ = 'm';
+        sprintf(key->name, "key%u", i);
+        key->len = strlen(key->name);
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        *(int*)(val->buf + 12) = i;
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    for(i=0;i<65536*k;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = i%65536;
+        key->len = 24;
+        key->typ = 'm';
+        sprintf(key->name, "key%u", i);
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        *(int*)(val->buf + 12) = i;
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    for(i=0;i<10;++i){
+        key = kmalloc(sizeof(struct y_key), GFP_KERNEL);
+        val = kmalloc(sizeof(struct y_value), GFP_KERNEL);
+        val->buf = kmalloc(256, GFP_KERNEL);
+        key->ino = 1234;
+        key->typ = 'm';
+        sprintf(key->name, "key%u", i);
+        key->len = strlen(key->name);
+        val->len = 256;
+        memcpy(val->buf, "hello, yssd.", 12);
+        *(int*)(val->buf + 12) = i;
+        kv_set(key, val);
+        kfree(key);
+        kfree(val->buf);
+        kfree(val);
+    }
+    kv_iter('m', 1234, 10+k);
+}
+
 static void yssd_close_file(void){
     filp_close(fp, NULL);
 }
@@ -659,10 +715,11 @@ static int __init yssd_init(void)
     // test_kv_flush_get();
     // test_kv_gc();
     // test_kv_gc_reset();
-    test_kv_lsm_flush();
+    // test_kv_lsm_flush();
     // test_lsm_flush();
     // test_min_heap_block();
     // test_rb_index_lower_bound();
+    test_kv_iter();
 
     pr_info("YSSD test finished\n");
     return 0;
