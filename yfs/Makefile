@@ -1,7 +1,7 @@
 MODULE = yfs
 
 obj-m += yfs.o
-$(MODULE)-objs := fs.o inode.o
+$(MODULE)-objs := fs.o inode.o super.o dir.o file.o
 
 PWD := $(CURDIR)
 

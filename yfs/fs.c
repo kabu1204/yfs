@@ -4,45 +4,9 @@
 #include <linux/slab.h>
 #include "internal.h"
 #include "inode.h"
-
-#define YFS_NAME "yfs"
-#define YFS_MAGIC 0xcafe
-#define YFS_MAX_FILE_SIZE 1<<28 // 256MB
-#define YFS_DEFAULT_MODE 0755
+#include "yfs.h"
 
 static unsigned long once = 0;
-
-static const struct super_operations yfs_super_ops = {
-    .statfs = simple_statfs,
-};
-
-static int yfs_fill_super(struct super_block *sb, void *data, int silent)
-{
-    struct yfs_superblock_info *fsi;
-    struct inode *inode;
-    int res;
-
-    fsi = kmalloc(sizeof(struct yfs_superblock_info), GFP_KERNEL);
-    sb->s_fs_info = fsi;
-    if (!fsi)
-        return -ENOMEM;
-
-    sb->s_maxbytes          = YFS_MAX_FILE_SIZE;
-    sb->s_blocksize         = PAGE_SIZE;
-    sb->s_blocksize_bits    = PAGE_SHIFT;
-    sb->s_magic             = YFS_MAGIC;
-    sb->s_op                = &yfs_super_ops;
-    sb->s_time_gran         = 1;
-
-    inode = yfs_get_inode(sb, 0, NULL, S_IFDIR | YFS_DEFAULT_MODE, 0);
-    sb->s_root = d_make_root(inode);
-    if (!sb->s_root){
-        pr_err("failed to d_make_root\n");
-        return -ENOMEM;
-    }
-
-    return 0;
-}
 
 struct dentry *yfs_mount(struct file_system_type *fs_type,
                               int flags,
@@ -80,6 +44,8 @@ static struct file_system_type yfs_file_system_type = {
 static int __init yfs_init(void)
 {
     if(test_and_set_bit(0, &once)) return 0;
+
+    yfs_init_inode_cache();
     
     return register_filesystem(&yfs_file_system_type);
 }
@@ -93,6 +59,8 @@ static void __exit yfs_exit(void)
         pr_err("failed to unregister yfs\n");
         return;
     }
+
+    yfs_destroy_inode_cache();
 
     pr_info("module unloaded\n");
 }

@@ -67,6 +67,7 @@ static int y_bio_get(char* buf, unsigned int max_len, const struct y_key* key, u
 
 static int y_bio_set(char* buf, unsigned int max_len, const struct y_key* key, unsigned int len, unsigned off){
     // TODO: implement me
+    // kv_set(key, );
     pr_info("yssd SET\n");
     return 0;
 }
@@ -719,7 +720,7 @@ static int __init yssd_init(void)
     // test_lsm_flush();
     // test_min_heap_block();
     // test_rb_index_lower_bound();
-    test_kv_iter();
+    // test_kv_iter();
 
     pr_info("YSSD test finished\n");
     return 0;
