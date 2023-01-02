@@ -15,6 +15,7 @@ yssd is responsible for indexing KV objects and transaction management.
   - [1. build YSSD](#1-build-yssd)
   - [2. insmod](#2-insmod)
   - [3. build user program](#3-build-user-program)
+  - [4. rmmod](#4-rmmod)
 - [Overview](#overview)
 - [YSSD](#yssd)
   - [Disk layout](#disk-layout)
@@ -54,6 +55,12 @@ There's an example code of interacting with YSSD via `ioctl()` in user space.
 ```bash
 gcc -o t user/main.c
 sudo ./t
+```
+
+## 4. rmmod
+
+```bash
+sudo rmmod yssd
 ```
 
 # Overview
