@@ -417,13 +417,11 @@ struct y_k2v* lsm_tree_get_upper_bound(struct lsm_tree* lt, struct y_key* key){
     read_unlock(&lt->imm_lk);
     
 slow:
-    // pr_info("slow\n");
     t = lsm_tree_get_slow_upper_bound(lt, key);
-    if(y_key_cmp(&t->key, &k2v->key)<0){
+    if(t->ptr.page_no!=OBJECT_NOT_FOUND && y_key_cmp(&t->key, &k2v->key)<0){
         kfree(k2v);
         k2v = t;
     }
-
     read_unlock(&lt->ext_lk);
     return k2v;
 }

@@ -4,8 +4,8 @@ YSSD := $(PWD)/yssd
 
 YFS := $(PWD)/yfs
 
-# LINUX_DIR = /lib/modules/$(shell uname -r)/build
-LINUX_DIR = /home/ycy/kernel/linux-5.4
+LINUX_DIR = /lib/modules/$(shell uname -r)/build
+# LINUX_DIR = /home/ycy/kernel/linux-5.4
 
 export CC LINUX_DIR
 

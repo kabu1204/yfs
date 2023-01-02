@@ -125,12 +125,6 @@ void memtable_flush(struct lsm_tree* lt){
     write_unlock(&lt->imm_lk);
 }
 
-
-
-void compact(struct lsm_tree* lt){
-
-}
-
 /*
     Can be called from either access thread nor vlog write thread.
     The caller must be holding a write lock(lt->lk).
@@ -159,7 +153,12 @@ int compact_deamon(void* arg){
         ++lt->n_flush;
         if(lt->n_flush % LSM_TREE_FLUSH_PER_COMPACT == 0){
             pr_info("[compact] major compaction triggered\n");
-            compact(lt);
+            /*
+                The code in merge.c is responsible for merging level0 (the first persisted level) to level1.
+                However, due to the time constrains and for simplicity, it is neither 
+                tested nor used. So there's only one level in YSSD's lsmtree, namely 
+                flushing memtable to level0.
+            */
             pr_info("[compact] major compaction finished\n");
         }
         wake_up_interruptible(&lt->waitq);

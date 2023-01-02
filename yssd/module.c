@@ -18,6 +18,8 @@
 #include "kv.h"
 #include "value_log.h"
 #include "linux/delay.h"
+#include "yssd.h"
+#include "yssd_ioctl.h"
 
 #define YSSD_MAJOR 240
 #define YSSD_DEV_NAME "yssd"
@@ -54,8 +56,53 @@ static void blockdev_release(struct gendisk *gdisk, fmode_t mode)
 
 int blockdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd, unsigned long arg)
 {
+    struct y_io_req req;
+    struct y_key key;
+    struct y_value val;
+    int res = 0;
+    val.buf = NULL;
     pr_info("ioctl cmd 0x%08x\n", cmd);
-    return -ENOTTY;
+    if(cmd<IOCTL_GET || cmd>IOCTL_NEXT) return -1;
+
+    copy_from_user(&req, (void __user *)arg, sizeof(struct y_io_req));
+    copy_from_user(&key, (void __user *)req.key, sizeof(struct y_key));
+    switch (cmd) {
+    case IOCTL_GET:
+        res = kv_get(&key, &val);
+        if(val.buf){
+            copy_to_user((void __user *)req.val.buf, val.buf, val.len);
+            req.val.len = val.len;
+        }
+        break;
+    case IOCTL_SET:
+        val.buf = kmalloc(req.val.len, GFP_KERNEL);
+        val.len = req.val.len;
+        copy_from_user(val.buf, (void __user *)req.val.buf, val.len);
+        kv_set(&key, &val);
+        break;
+    case IOCTL_DEL:
+        kv_del(&key);
+        break;
+    case IOCTL_ITER:
+        res = kv_iter(Y_KV_META, req.ino, &key, &val);
+        if(res!=ERR_NOT_FOUND) copy_to_user((void __user *)req.key, &key, sizeof(struct y_key));
+        if(val.buf){
+            copy_to_user((void __user *)req.val.buf, val.buf, val.len);
+            req.val.len = val.len;
+        }
+        break;
+    case IOCTL_NEXT:
+        res = kv_next(&key, &val);
+        if(res!=ERR_NOT_FOUND) copy_to_user((void __user *)req.key, &key, sizeof(struct y_key));
+        if(val.buf){
+            copy_to_user((void __user *)req.val.buf, val.buf, val.len);
+            req.val.len = val.len;
+        }
+        break;
+    }
+    copy_to_user((void __user *)arg, &req, sizeof(struct y_io_req));
+    if(val.buf) kfree(val.buf);
+    return res;
 }
 
 static int y_bio_get(char* buf, unsigned int max_len, const struct y_key* key, unsigned int len, unsigned off){
@@ -576,7 +623,7 @@ static void test_kv_iter(void){
         kfree(val->buf);
         kfree(val);
     }
-    kv_iter('m', 1234, 10+k);
+    // kv_iter('m', 1234, 10+k);
 }
 
 static void yssd_close_file(void){
@@ -585,19 +632,19 @@ static void yssd_close_file(void){
 
 static blk_qc_t y_make_request(struct request_queue* q, struct bio* bio){
     struct y_io_req* req = bio->bi_private;
-	struct yssd_block_dev *dev = bio->bi_disk->private_data;
-	struct bio_vec bvec;
-	sector_t sector;
-	struct bvec_iter iter;
+    struct yssd_block_dev *dev = bio->bi_disk->private_data;
+    struct bio_vec bvec;
+    sector_t sector;
+    struct bvec_iter iter;
     char* addr;
     unsigned int len;
     unsigned int off;
     int res;
 
-	sector = bio->bi_iter.bi_sector;
+    sector = bio->bi_iter.bi_sector;
 
-	bio_for_each_segment(bvec, bio, iter) {
-		len = bvec.bv_len;
+    bio_for_each_segment(bvec, bio, iter) {
+        len = bvec.bv_len;
         off = bvec.bv_offset;
 
         switch(req->typ) {

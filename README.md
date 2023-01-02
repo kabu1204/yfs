@@ -11,6 +11,10 @@ yssd is responsible for indexing KV objects and transaction management.
 ---
 
 - [YFS](#yfs)
+- [How to use](#how-to-use)
+  - [1. build YSSD](#1-build-yssd)
+  - [2. insmod](#2-insmod)
+  - [3. build user program](#3-build-user-program)
 - [Overview](#overview)
 - [YSSD](#yssd)
   - [Disk layout](#disk-layout)
@@ -27,6 +31,30 @@ yssd is responsible for indexing KV objects and transaction management.
     - [Garbage Collection](#garbage-collection)
   - [Concurrency Control](#concurrency-control)
 
+# How to use
+## 1. build YSSD
+
+```bash
+git clone https://github.com/kabu1204/yfs.git
+cd yfs
+make
+```
+
+## 2. insmod
+
+```bash
+dd if=/dev/zero of=./yssd.data bs=1k count=10240
+sudo insmod yssd/yssd.ko yssd_file="./yssd.data"
+```
+
+## 3. build user program
+
+There's an example code of interacting with YSSD via `ioctl()` in user space.
+
+```bash
+gcc -o t user/main.c
+sudo ./t
+```
 
 # Overview
 

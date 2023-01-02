@@ -8,13 +8,15 @@
 
 void kv_init(void);
 
-void kv_get(struct y_key* key, struct y_value* val);
+int kv_get(struct y_key* key, struct y_value* val);
 
 void kv_set(struct y_key* key, struct y_value* val);
 
 void kv_del(struct y_key* key);
 
-void kv_iter(char typ, unsigned int ino, unsigned int n);
+int kv_iter(char typ, unsigned int ino, struct y_key* key, struct y_value* val);
+
+int kv_next(struct y_key* key, struct y_value* val);
 
 void mannual_gc(void);
 
