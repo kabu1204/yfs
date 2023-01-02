@@ -33,6 +33,15 @@ yssd is responsible for indexing KV objects and transaction management.
   - [Concurrency Control](#concurrency-control)
 
 # How to use
+
+Tested environment:
+
+- release: Linux 5.4.0-135-generic
+
+- version: #152-Ubuntu SMP Wed Nov 23 20:19:22 UTC 2022
+
+- platform: x86_64
+
 ## 1. build YSSD
 
 ```bash
